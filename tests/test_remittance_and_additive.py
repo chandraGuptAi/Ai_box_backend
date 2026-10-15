@@ -192,3 +192,83 @@ def test_api_incremental_prompt_merges_without_losing_previous_sections(client, 
     # Verify newly added section is stamped with source_prompt
     new_sec = next(s for s in sections if s["title"] == "Deduction Breakdown")
     assert new_sec.get("source_prompt") == "Also compare deductions and add a breakdown table"
+
+
+def test_chart_removal_followup(client, fake_ai):
+    fake_ai.response = {
+        "title": "Shipment Overview",
+        "executive_summary": {"heading": "Overview", "paragraphs": ["Initial analysis."]},
+        "findings": [],
+        "recommendations": [],
+        "sections": [],
+    }
+    shipment_data = {
+        "getOrderList": [
+            {"order_id": "1", "order_status": "Delivered", "courier_name": "Delhivery", "order_date": "2025-01-01"},
+            {"order_id": "2", "order_status": "In Transit", "courier_name": "BlueDart", "order_date": "2025-01-02"},
+            {"order_id": "3", "order_status": "RTO", "courier_name": "Delhivery", "order_date": "2025-01-03"},
+        ]
+    }
+    # Initial report with 2 charts: 1 area chart, 1 donut chart
+    initial_prompt = (
+        "Analyse my shipment data and generate a detailed performance report. "
+        "Please include exactly two charts: "
+        "1. A area Chart comparing courier-wise total shipment volume and delivery counts. "
+        "2. A Pie/Donut Chart showing the overall delivery status breakdown."
+    )
+    resp1 = client.post(
+        "/api/reports/generate",
+        json={"report_type": "shipment", "prompt": initial_prompt, "data": shipment_data},
+    )
+    assert resp1.status_code == 200
+    report1 = resp1.json()
+    charts1 = report1["structured_report"]["charts"]
+    assert len(charts1) == 2
+    types1 = [c["type"] for c in charts1]
+    assert "area" in types1
+    assert any(t in ("doughnut", "pie") for t in types1)
+
+    # Follow-up 1: "remove area chart"
+    resp2 = client.post(
+        "/api/reports/generate",
+        json={
+            "report_type": "shipment",
+            "prompt": "remove area chart",
+            "data": shipment_data,
+            "previous_report": report1,
+        },
+    )
+    assert resp2.status_code == 200
+    report2 = resp2.json()
+    charts2 = report2["structured_report"]["charts"]
+    assert len(charts2) == 1
+    assert charts2[0]["type"] != "area"
+
+    # Follow-up 2: "remove the chart"
+    resp3 = client.post(
+        "/api/reports/generate",
+        json={
+            "report_type": "shipment",
+            "prompt": "remove the chart",
+            "data": shipment_data,
+            "previous_report": report2,
+        },
+    )
+    assert resp3.status_code == 200
+    report3 = resp3.json()
+    charts3 = report3["structured_report"]["charts"]
+    assert len(charts3) == 0
+
+    # Follow-up 3: Hindi "chart hata do" from original report
+    resp4 = client.post(
+        "/api/reports/generate",
+        json={
+            "report_type": "shipment",
+            "prompt": "chart hata do",
+            "data": shipment_data,
+            "previous_report": report1,
+        },
+    )
+    assert resp4.status_code == 200
+    report4 = resp4.json()
+    assert len(report4["structured_report"]["charts"]) == 0

@@ -44,6 +44,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_private_network=True,
     expose_headers=["Content-Disposition", "X-Report-Access-Token"],
 )
 

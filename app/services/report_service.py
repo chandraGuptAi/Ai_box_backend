@@ -356,6 +356,12 @@ class ReportService:
                 limitations = list(dict.fromkeys(limitations + [f"{n.requested_type}: {n.reason}" for n in chart_notes]))
         else:
             charts = report_charts(analysis, intent) if intent else []
+        if intent and "all" in getattr(intent, "excluded_charts", ()):
+            charts = []
+        elif intent and getattr(intent, "excluded_charts", ()):
+            charts = [c for c in charts if (c.type or "").lower() not in intent.excluded_charts and (c.id or "").lower() not in intent.excluded_charts]
+        elif chart_plan.excluded and not chart_plan.requests:
+            charts = [c for c in charts if (c.type or "").lower() not in chart_plan.excluded]
         if intent:
             report.key_metrics = [KeyMetric(label=m.label, value=str(m.value) + ("%" if m.unit == "percent" else ""))
                                   for m in cards]
@@ -377,10 +383,12 @@ class ReportService:
                                                                   tone=c.get("tone"), icon=c.get("icon"))
                                                     for c in cards]
         if request.previous_report:
-            report = self._merge_with_previous_report(report, request.previous_report, request.prompt)
+            report = self._merge_with_previous_report(report, request.previous_report, request.prompt, intent=intent, chart_plan=chart_plan)
         return report
 
-    def _merge_with_previous_report(self, report: ReportResponse, prev: dict[str, Any], prompt: str) -> ReportResponse:
+    def _merge_with_previous_report(self, report: ReportResponse, prev: dict[str, Any], prompt: str,
+                                    intent: Any | None = None,
+                                    chart_plan: Any | None = None) -> ReportResponse:
         try:
             prev_sr = prev.get("structured_report") or {}
             prev_sections = prev_sr.get("sections") or []
@@ -417,26 +425,66 @@ class ReportService:
                     order += 1
                     merged_sections.append(sec_dump)
 
-            # 3. Merge charts (preserve previous, append new without duplicating IDs)
+            # 3. Merge charts (preserve previous except removed, append new without duplicating IDs)
             prev_charts = prev_sr.get("charts") or []
             merged_charts = [c for c in prev_charts if isinstance(c, dict)]
+
+            excluded_targets = set()
+            if intent and getattr(intent, "excluded_charts", ()):
+                excluded_targets.update(intent.excluded_charts)
+            if chart_plan and getattr(chart_plan, "excluded", None):
+                requested_types = {r.type for r in getattr(chart_plan, "requests", [])}
+                excluded_targets.update(t for t in chart_plan.excluded if t not in requested_types)
+
+            prompt_lower = (prompt or "").lower()
+            if not excluded_targets:
+                if re.search(r"\b(?:no|without|remove|delete|omit|drop|hide|exclude)\s+(?:all\s+)?(?:the\s+|this\s+|that\s+)?(?:graphs?|charts?|visualizations?|visuals?)\b|\b(?:graphs?|charts?|visuals?)\s*(?:hata|mat\s+dikh|nahi|remove|delete|drop)\b", prompt_lower):
+                    excluded_targets.add("all")
+
+            if "all" in excluded_targets:
+                merged_charts = []
+            else:
+                if "first" in excluded_targets and merged_charts:
+                    merged_charts.pop(0)
+                if "second" in excluded_targets and len(merged_charts) > 1:
+                    merged_charts.pop(1)
+                type_excl = {t for t in excluded_targets if t in {"area", "line", "bar", "pie", "doughnut", "donut"}}
+                if "donut" in type_excl or "doughnut" in type_excl:
+                    type_excl.update({"donut", "doughnut"})
+                if type_excl:
+                    merged_charts = [c for c in merged_charts if (c.get("type") or "").lower() not in type_excl]
+                if "courier" in excluded_targets:
+                    merged_charts = [c for c in merged_charts if "courier" not in (c.get("id") or "").lower() and "courier" not in (c.get("title") or "").lower()]
+                if "status" in excluded_targets:
+                    merged_charts = [c for c in merged_charts if "status" not in (c.get("id") or "").lower() and "status" not in (c.get("title") or "").lower()]
+
+            is_removal_only = bool(excluded_targets) and not bool(re.search(r"\b(?:add|show|include|create|draw|display)\b", prompt_lower))
             seen_chart_ids = {c.get("id") for c in merged_charts}
-            if report.structured_report and report.structured_report.charts:
+            if not is_removal_only and report.structured_report and report.structured_report.charts:
                 for chart in report.structured_report.charts:
                     chart_dump = chart.model_dump()
-                    if chart_dump.get("id") not in seen_chart_ids:
-                        seen_chart_ids.add(chart_dump.get("id"))
+                    cid = chart_dump.get("id")
+                    ctype = (chart_dump.get("type") or "").lower()
+                    if cid not in seen_chart_ids and ctype not in excluded_targets:
+                        seen_chart_ids.add(cid)
                         merged_charts.append(chart_dump)
 
             # 4. Merge tables
             prev_tables = prev.get("tables") or []
             merged_tables = [t for t in prev_tables if isinstance(t, dict)]
+            if intent and intent.omit_courier_charges_table:
+                merged_tables = [t for t in merged_tables if "shipping charges" not in (t.get("title") or "").lower() and "courier charges" not in (t.get("title") or "").lower()]
+            if re.search(r"\b(?:remove|delete|omit|drop|hide)\s+(?:all\s+)?tables?\b|\b(no|without)\s+tables?\b|\btables?\s*(?:hata|mat|nahi|remove|delete)\b", prompt_lower):
+                merged_tables = []
+
+            is_table_removal_only = bool(re.search(r"\b(?:remove|delete|omit|drop|hide|hata|mat\s+dikh)\b.*?\btables?\b|\btables?\b.*?\b(?:remove|delete|omit|drop|hide|hata|mat\s+dikh)\b", prompt_lower)) and not bool(re.search(r"\b(?:add|show|include|create|display)\b", prompt_lower))
             seen_table_titles = {t.get("title") for t in merged_tables}
-            for table in report.tables:
-                t_dump = table.model_dump()
-                if t_dump.get("title") not in seen_table_titles:
-                    seen_table_titles.add(t_dump.get("title"))
-                    merged_tables.append(t_dump)
+            if not is_table_removal_only:
+                for table in report.tables:
+                    t_dump = table.model_dump()
+                    if t_dump.get("title") not in seen_table_titles:
+                        seen_table_titles.add(t_dump.get("title"))
+                        merged_tables.append(t_dump)
 
             # 5. Merge findings
             prev_findings = prev.get("content", {}).get("findings") or prev_sr.get("findings") or []

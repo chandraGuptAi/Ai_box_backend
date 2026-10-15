@@ -26,6 +26,7 @@ class ReportIntent:
     wants_bar: bool = False
     wants_area: bool = False
     chart_specs: tuple[dict, ...] = ()
+    excluded_charts: tuple[str, ...] = ()
 
     @property
     def compact(self):
@@ -61,7 +62,51 @@ def extract_chart_specs(text: str) -> list[dict]:
 
 def detect_intent(prompt):
     text = prompt.lower()
-    graphs = bool(re.search(r"\b(graphs?|charts?|visualizations?|donut|doughnut)\b", text)) and not re.search(r"\b(no|without)\s+(graphs?|charts?)", text)
+
+    has_specific_chart_target = any(k in text for k in [
+        'area', 'line', 'bar', 'column', 'pie', 'donut', 'doughnut',
+        'courier', 'status', 'first', 'second', '1st', '2nd', 'pehla', 'dusra'
+    ])
+    remove_all_charts = (
+        bool(re.search(
+            r"\b(?:no|without|remove|delete|omit|drop|hide|exclude)\s+(?:all\s+)?(?:the\s+|this\s+|that\s+)?(?:graphs?|charts?|visualizations?|visuals?)\b"
+            r"|\b(?:graphs?|charts?|visuals?)\s*(?:ko\s+)?(?:hata\s*(?:d[eo]|o|ye)?|mat\s+dikh?a[on]?|nahi\s+chahiye|remove|delete|drop)\b"
+            r"|\b(?:hata\s*(?:d[eo]|o|ye)?|mat\s+dikh?a[on]?)\s+(?:all\s+)?(?:the\s+|this\s+|that\s+)?(?:graphs?|charts?)\b",
+            text
+        ))
+        and not has_specific_chart_target
+    )
+
+    excluded_charts_list: list[str] = []
+    if remove_all_charts or (bool(re.search(r"\b(no|without)\s+(?:all\s+)?(?:graphs?|charts?|visuals?)\b", text)) and not has_specific_chart_target):
+        excluded_charts_list.append("all")
+    else:
+        types = [
+            ("area", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?area\b|\barea\s+(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
+            ("line", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?line\b|\bline\s+(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
+            ("bar", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?(?:bar|column)\b|\b(?:bar|column)\s+(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
+            ("pie", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?pie\b|\bpie\s+(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
+            ("donut", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?(?:donut|doughnut)\b|\b(?:donut|doughnut)\s+(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
+            ("first", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?(?:first|1st|pehla)\s*(?:charts?|graphs?)?\b|\b(?:first|1st|pehla)\s*(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
+            ("second", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?(?:second|2nd|dusra)\s*(?:charts?|graphs?)?\b|\b(?:second|2nd|dusra)\s*(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
+            ("courier", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?courier\s+(?:charts?|graphs?)\b|\bcourier\s+(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
+            ("status", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?(?:status|delivery)\s+(?:charts?|graphs?)\b|\b(?:status|delivery)\s+(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
+        ]
+        for name, pat in types:
+            if re.search(pat, text):
+                if name == "pie" and re.search(r"\b(?:show|add|in)\s+.*?\bpie\s+chart\b", text):
+                    continue
+                if name == "donut" and re.search(r"\b(?:show|add|in)\s+.*?\b(?:donut|doughnut)\s+chart\b", text):
+                    continue
+                if name == "donut":
+                    excluded_charts_list.extend(["donut", "doughnut"])
+                else:
+                    excluded_charts_list.append(name)
+
+    has_positive_graph_word = bool(re.search(r"\b(graphs?|charts?|visualizations?|donut|doughnut)\b", text)) and not (
+        remove_all_charts or bool(re.search(r"\b(no|without)\s+(graphs?|charts?)", text))
+    )
+    graphs = has_positive_graph_word
     tables = bool(re.search(r"\b(tables?|tabular)\b", text)) and not re.search(r"\b(no|without)\s+tables?", text)
     only = bool(re.search(r"\b(only|just)\b", text))
     all_tables = bool(re.search(
@@ -103,11 +148,16 @@ def detect_intent(prompt):
             topics.append("courier")
     tables = (tables or all_tables or mode in {"detailed", "comparison"}) and not re.search(r"\b(no|without)\s+tables?", text)
     recommendations = mode in {"detailed", "comparison"} or bool(re.search(r"recommend|suggest|optimization", text))
-    no_graphs = bool(re.search(r"\b(no|without)\s+(graphs?|charts?|visuals?)\b", text))
-    has_graph_word = bool(re.search(r"\b(graphs?|charts?|visualizations?|visuals?|donut|doughnut)\b", text)) and not no_graphs
-    graphs = has_graph_word or (mode in {"detailed", "comparison"} and not no_graphs)
+    no_graphs = "all" in excluded_charts_list or bool(re.search(r"\b(no|without)\s+(graphs?|charts?|visuals?)\b", text))
+    has_graph_word = bool(re.search(r"\b(graphs?|charts?|visualizations?|visuals?|donut|doughnut)\b", text)) and not (
+        no_graphs or bool(re.search(r"\b(?:remove|delete|omit|drop|hide|exclude)\s+.*?\b(?:graphs?|charts?|visualizations?|visuals?)\b|\b(?:graphs?|charts?|visuals?)\s*(?:hata|mat\s+dikh|nahi|remove|delete|drop)\b", text))
+    )
+    graphs = (not no_graphs) and (has_graph_word or (mode in {"detailed", "comparison"} and not bool(excluded_charts_list)))
 
-    donut = bool(re.search(r"\b(donut|doughnut)s?\b|\bthis\s+type\s+of\s+chart\b|\bvariable\s+radius\b", text))
+    donut = (
+        bool(re.search(r"\b(donut|doughnut)s?\b|\bthis\s+type\s+of\s+chart\b|\bvariable\s+radius\b", text))
+        and not any(x in excluded_charts_list for x in ("all", "donut", "doughnut"))
+    )
     omit_courier_charges_table = bool(re.search(
         r"\b(?:remove|omit|without|no)\b.*?\b(?:shipping charges by courier|courier charges)\b.*?\btables?\b|\btables?\b.*?\b(?:remove|omit|without|no)\b.*?\b(?:shipping charges by courier|courier charges)\b|\bremove\s+the\s+table\s+of\s+shipping\s+charges\b",
         text
@@ -115,11 +165,11 @@ def detect_intent(prompt):
     pie_courier = bool(re.search(
         r"\b(?:shipping charges|courier charges|courier freight)\b.*?\bpie\b|\bpie\b.*?\b(?:shipping charges|courier charges|courier freight)\b",
         text
-    ))
+    )) and not any(x in excluded_charts_list for x in ("all", "pie"))
     chart_courier_charges = bool(re.search(
         r"\b(?:shipping charges|courier charges|courier freight|freight distribution|freight charges|charges by courier)\b.*?\b(?:pie|donut|doughnut)\b|\b(?:pie|donut|doughnut)\b.*?\b(?:shipping charges|courier charges|courier freight|freight distribution|freight charges|charges by courier)\b",
         text
-    ))
+    )) and not any(x in excluded_charts_list for x in ("all", "pie", "donut", "doughnut", "courier"))
     single_chart = bool(re.search(
         r"\b(?:single\s+(?:graph|chart|visualization)|one\s+(?:graph|chart|visualization)|take\s+single\s+graph|only\s+one\s+(?:graph|chart)|single\s+area|single\s+donut)\b",
         text
@@ -134,13 +184,24 @@ def detect_intent(prompt):
         r"|\b(?:donut|doughnut|pie)\b.*?\bdono\s+(?:graph|chart)s?\b",
         text
     ))
-    wants_bar = bool(re.search(r"\b(?:bar|column|baar)\s*(?:charts?|graphs?|cha?rt)\b|\b(?:bar|column)\s+chart\b", text)) and not re.search(r"\b(no|without)\s+(bar|column)", text)
-    wants_area = bool(re.search(r"\b(?:area[- ](?:charts?|graphs?|plots?)|area\s+(?:charts?|graphs?)|(?:in|as|with)\s+area(?:[- ](?:charts?|graphs?))?)\b", text)) and not re.search(r"\b(no|without)\s+area", text)
+    wants_bar = (
+        bool(re.search(r"\b(?:bar|column|baar)\s*(?:charts?|graphs?|cha?rt)\b|\b(?:bar|column)\s+chart\b", text))
+        and not any(x in excluded_charts_list for x in ("all", "bar", "column"))
+    )
+    wants_area = (
+        bool(re.search(r"\b(?:area[- ](?:charts?|graphs?|plots?)|area\s+(?:charts?|graphs?)|(?:in|as|with)\s+area(?:[- ](?:charts?|graphs?))?)\b", text))
+        and not any(x in excluded_charts_list for x in ("all", "area"))
+    )
 
-    chart_specs = extract_chart_specs(text)
+    raw_chart_specs = extract_chart_specs(text)
+    chart_specs = [
+        s for s in raw_chart_specs
+        if s.get("type") not in excluded_charts_list
+        and s.get("topic") not in excluded_charts_list
+    ] if "all" not in excluded_charts_list else []
     return ReportIntent(mode, tuple(topics), status, bool(graphs), bool(tables), recommendations, donut,
                         omit_courier_charges_table, chart_courier_charges, single_chart, pie_courier, all_tables,
-                        omit_limitations, both_circular, wants_bar, wants_area, tuple(chart_specs))
+                        omit_limitations, both_circular, wants_bar, wants_area, tuple(chart_specs), tuple(excluded_charts_list))
 
 
 def scope_analysis(analysis, data, intent):
@@ -304,7 +365,7 @@ def display_metrics(analysis, intent):
 
 
 def report_charts(analysis, intent):
-    if not intent.charts or not analysis.records_analyzed:
+    if not intent.charts or not analysis.records_analyzed or "all" in getattr(intent, "excluded_charts", ()):
         return []
     m, charts = analysis.metrics, []
     def add(key, title, rows, label, value, unit, kind="bar"):
@@ -324,7 +385,12 @@ def report_charts(analysis, intent):
     # If the user explicitly specified charts (e.g. area chart for courier, line chart for status)
     if intent.chart_specs:
         added_topics = set()
-        for spec in intent.chart_specs:
+        specs_to_use = [
+            s for s in intent.chart_specs
+            if s.get("type") not in getattr(intent, "excluded_charts", ())
+            and s.get("topic") not in getattr(intent, "excluded_charts", ())
+        ]
+        for spec in specs_to_use:
             ctype = spec.get("type", "bar")
             topic = spec.get("topic")
 
@@ -453,6 +519,23 @@ def report_charts(analysis, intent):
                     add("courier_orders", "Orders by Courier", m["courier_performance"], "courier", "total_orders", "Orders", kind)
                 elif has_multiple_slices(m.get("payment_mode_breakdown"), "count"):
                     add("payment_orders", "Orders by Payment Mode", m["payment_mode_breakdown"], "payment_mode", "count", "Orders", kind)
+    if getattr(intent, "excluded_charts", ()):
+        excl = set(intent.excluded_charts)
+        filtered = []
+        for c in charts:
+            ctype = (c.type or "").lower()
+            cid = (c.id or "").lower()
+            ctitle = (c.title or "").lower()
+            if ctype in excl or cid in excl:
+                continue
+            if ("donut" in excl or "doughnut" in excl) and ctype in {"donut", "doughnut"}:
+                continue
+            if "courier" in excl and ("courier" in cid or "courier" in ctitle):
+                continue
+            if "status" in excl and ("status" in cid or "status" in ctitle):
+                continue
+            filtered.append(c)
+        charts = filtered
     return charts[:1] if intent.single_chart else charts[:2]
 
 
