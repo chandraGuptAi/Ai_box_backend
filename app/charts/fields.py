@@ -80,15 +80,18 @@ def _is(*values: str) -> frozenset:
 
 # --- Shipments ---------------------------------------------------------------
 
-_SHIPPED = _is("in_transit", "delivered", "rto", "exception")
+_SHIPPED = _is("in_transit", "delivered", "rto", "exception", "lost")
 
 
 def _shipment_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
     from app.prompts.shipment_prompt import extract_orders, parse_order
     rows = []
-    for record in extract_orders(data):
+    for index, record in enumerate(extract_orders(data)):
         order = parse_order(record)
         rows.append({
+            "_index": index,  # position in the supplied list; lets an analysis plan scope the source records
+            "order_id": order.order_id,
+            "awb_number": order.awb_number,
             "status_category": order.category,
             "status": order.status,
             "courier": order.courier,
@@ -102,6 +105,9 @@ def _shipment_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
             "order_value": order.order_value,
             "weight": order.weight,
             "charge": order.charge,
+            "collectable_amount": order.collectable_amount,
+            "pickup_date": order.pickup_date,
+            "delivery_date": order.delivery_date,
         })
     return rows
 
@@ -123,6 +129,7 @@ SHIPMENT_ADAPTER = DatasetAdapter(
         FieldSpec("order_value", "number", "Order Value", (r"order values?", r"revenue", r"\bgmv\b", r"sales", r"invoice"),
                   value_format="currency"),
         FieldSpec("weight", "number", "Weight", (r"weights?", r"\bkg\b"), unit="kg"),
+        FieldSpec("collectable_amount", "number", "Collectable Amount", (r"collectable",), value_format="currency"),
         FieldSpec("charge", "number", "Shipping Charge", (r"charges?", r"freight", r"shipping cost", r"\bcost\b"),
                   value_format="currency"),
     )},
@@ -148,11 +155,15 @@ SHIPMENT_ADAPTER = DatasetAdapter(
         MeasureSpec("order_value", "Order Value", "sum", field="order_value", value_format="currency",
                     aliases=(r"order values?", r"revenue", r"\bgmv\b", r"sales")),
         MeasureSpec("weight", "Total Weight (kg)", "sum", field="weight", aliases=(r"total weight", r"weights?")),
+        MeasureSpec("collectable_amount", "Collectable Amount", "sum", field="collectable_amount", value_format="currency",
+                    aliases=(r"collectable",)),
         MeasureSpec("cancelled_orders", "Cancelled Orders", "count", where=(("status_category", _is("cancelled")),),
                     aliases=(r"cancel",)),
         MeasureSpec("rto_orders", "RTO Orders", "count", where=(("status_category", _is("rto")),), aliases=(r"\brto\b", r"returns?")),
         MeasureSpec("exception_orders", "Exception Orders", "count", where=(("status_category", _is("exception")),),
                     aliases=(r"exceptions?", r"\bndr\b", r"undeliver", r"failed")),
+        MeasureSpec("lost_orders", "Lost Orders", "count", where=(("status_category", _is("lost")),),
+                    aliases=(r"\blost\b",)),
         MeasureSpec("delivered_orders", "Delivered Orders", "count", where=(("status_category", _is("delivered")),),
                     aliases=(r"deliver(?:ed|ies)",)),
         MeasureSpec("in_transit_orders", "In-Transit Orders", "count", where=(("status_category", _is("in_transit")),),
@@ -175,14 +186,14 @@ SHIPMENT_ADAPTER = DatasetAdapter(
             Stage("Shipped", where=(("status_category", _SHIPPED),)),
             Stage("Delivered", where=(("status_category", _is("delivered")),))),
     waterfall_total="Total Orders",
-    waterfall_steps=("cancelled", "pending", "in_transit", "rto", "exception", "other", "unknown", "delivered"),
+    waterfall_steps=("cancelled", "pending", "in_transit", "rto", "exception", "lost", "other", "unknown", "delivered"),
     rate_measures=("delivery_rate", "cancellation_rate", "rto_rate", "exception_rate"),
     geo_field="destination_state",
     category_labels={"status_category": {"delivered": "Delivered", "cancelled": "Cancelled", "in_transit": "In Transit",
-                                         "pending": "Pending", "rto": "RTO", "exception": "Exception / NDR",
+                                         "pending": "Pending", "rto": "RTO", "exception": "Exception / NDR", "lost": "Lost",
                                          "other": "Other", "unknown": "Unknown"}},
     filter_values={"status_category": {r"\bdelivered\b": "delivered", r"cancell?ed": "cancelled", r"\brto\b": "rto",
-                                       r"in[- ]transit": "in_transit", r"\bpending\b": "pending", r"\bndr\b|exception": "exception"},
+                                       r"in[- ]transit": "in_transit", r"\bpending\b": "pending", r"\bndr\b|exception|undeliver": "exception", r"\blost\b": "lost"},
                    "payment_mode": {r"\bcod\b": "COD", r"prepaid": "Prepaid", r"to\s?pay": "ToPay"}},
 )
 

@@ -10,13 +10,24 @@ def financial_focus(prompt):
     return bool(re.search(r"financial|shipping charg|shipping cost|freight charg|charge per order", prompt, re.I))
 
 
+# Same accepted keys as the order parser, so charts, tables and financial totals read one field.
+CHARGE_KEYS = ("totalcharge", "shippingcharge", "shippingcharges", "freightcharge", "freightcharges")
+# The same cleaning the order parser applies, so a charge is valid (or invalid) everywhere at once.
+_CURRENCY_MARKS = re.compile(r"(?i)inr|rs\.?|₹|,|\s")
+
+
+def _charge(record):
+    present = {re.sub(r"[^a-z0-9]", "", str(k).lower()): v for k, v in record.items()}
+    return next((present[k] for k in CHARGE_KEYS if present.get(k) not in (None, "")), None)
+
+
 def shipping_financial_metrics(records, orders):
     groups = {"courier": defaultdict(list), "payment_mode": defaultdict(list)}
     charges = []
     cancelled = []
     invalid = missing = cancelled_orders = 0
     for record, order in zip(records, orders):
-        raw = next((v for k,v in record.items() if re.sub(r"[^a-z0-9]", "", str(k).lower()) == "totalcharge"), None)
+        raw = _charge(record)
         charge = None
         if raw is None or raw == "":
             missing += 1
@@ -24,7 +35,7 @@ def shipping_financial_metrics(records, orders):
             try:
                 if isinstance(raw, bool):
                     raise InvalidOperation
-                charge = Decimal(str(raw).replace(",", "").strip())
+                charge = Decimal(_CURRENCY_MARKS.sub("", str(raw)))
                 if not charge.is_finite() or charge < 0 or charge.adjusted() > 15 or charge.as_tuple().exponent < -12:
                     raise InvalidOperation
             except (InvalidOperation, ValueError):

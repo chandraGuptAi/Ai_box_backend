@@ -7,6 +7,10 @@ from app.prompts.base import AnalysisResult
 from app.prompts.shipment_financial import financial_focus, shipping_financial_metrics, financial_tables
 
 
+STATUS_LABELS = {"delivered": "Delivered", "cancelled": "Cancelled", "rto": "RTO", "in_transit": "In-Transit",
+                 "pending": "Pending", "exception": "Exception", "lost": "Lost", "other": "Other", "unknown": "Status-Missing"}
+
+
 @dataclass(frozen=True)
 class ReportIntent:
     mode: str = "detailed"
@@ -27,6 +31,11 @@ class ReportIntent:
     wants_area: bool = False
     chart_specs: tuple[dict, ...] = ()
     excluded_charts: tuple[str, ...] = ()
+    focused: bool = False   # set from the analysis plan: only explicitly relevant tables and charts
+
+    @property
+    def status_label(self):
+        return STATUS_LABELS.get(self.status, str(self.status).replace("_", " ").title()) if self.status else None
 
     @property
     def compact(self):
@@ -201,12 +210,16 @@ def detect_intent(prompt):
                         omit_limitations, both_circular, wants_bar, wants_area, tuple(chart_specs), tuple(excluded_charts_list))
 
 
-def scope_analysis(analysis, data, intent):
-    if not intent.status:
+def scope_analysis(analysis, data, intent, keep=None):
+    """Recalculate the analysis for a subset: the plan's record indexes (`keep`) or the intent's status."""
+    if keep is None and not intent.status:
         return analysis
     from app.prompts.shipment_prompt import extract_orders, parse_order, compute_metrics, build_tables, build_key_metrics
     pairs = [(record, parse_order(record)) for record in extract_orders(data)]
-    pairs = [(record, order) for record, order in pairs if order.category == intent.status]
+    if keep is not None:
+        pairs = [pair for index, pair in enumerate(pairs) if index in keep]
+    else:
+        pairs = [(record, order) for record, order in pairs if order.category == intent.status]
     metrics = compute_metrics([o for _, o in pairs])
     metrics["shipping_financial"] = shipping_financial_metrics([r for r, _ in pairs], [o for _, o in pairs])
     metrics["scope"] = {**analysis.metrics["scope"], "source_records": analysis.records_analyzed,
@@ -227,7 +240,9 @@ def selected_tables(analysis, intent):
         if financial_only:
             wanted.update(("Shipping Charges by Courier", "Shipping Charges by Payment Mode"))
         else:
-            financial = "financial" in intent.topics or bool(analysis.metrics.get("shipping_financial", {}).get("total_shipping_charges"))
+            # Focused requests get financial tables only when they ask about money.
+            financial = "financial" in intent.topics or (not intent.focused and bool(
+                analysis.metrics.get("shipping_financial", {}).get("total_shipping_charges")))
             if financial:
                 wanted.update(("Shipping Charges by Courier", "Shipping Charges by Payment Mode"))
             for topic, title in (("status", "Shipment Status Summary"), ("courier", "Courier Performance"),
@@ -235,7 +250,7 @@ def selected_tables(analysis, intent):
                                  ("geography", "Top Destination States"), ("exception", "Shipment Status Summary")):
                 if topic in intent.topics:
                     wanted.add(title)
-            if any(t.title == "Account-Level Status Benchmark" for t in analysis.tables):
+            if (not intent.focused or "status" in intent.topics) and any(t.title == "Account-Level Status Benchmark" for t in analysis.tables):
                 wanted.add("Account-Level Status Benchmark")
     if intent.omit_courier_charges_table:
         wanted.discard("Shipping Charges by Courier")
@@ -246,8 +261,9 @@ def selected_tables(analysis, intent):
         rows = table.rows[:8] if intent.compact else table.rows
         columns = table.columns
         if intent.status and table.title == "Courier Performance":
-            columns = ["Courier", "Delivered Orders"]
-            rows = [[row[0], row[2]] for row in rows]
+            # Every record in a single-status cohort has that status, so its order count is the status count.
+            columns = ["Courier", f"{intent.status_label} Orders"]
+            rows = [[row[0], row[1]] for row in rows]
         result[f"table_{i}"] = ReportTable(title=table.title, columns=columns, rows=rows)
     if intent.mode == "table_only" and len(result) > 1:
         result = dict(list(result.items())[:1])
@@ -256,7 +272,7 @@ def selected_tables(analysis, intent):
 
 def relevant_metrics(analysis, intent):
     metrics = analysis.metrics
-    keys = {"total_orders", "order_date_range", "scope", "account_summary"}
+    keys = {"total_orders", "order_date_range", "scope", "account_summary", "comparisons"}
     mapping = {"status": ("status_category_breakdown", "rates"),
                "courier": ("courier_performance", "distinct_couriers"),
                "payment": ("payment_mode_breakdown",),
@@ -273,8 +289,8 @@ def relevant_metrics(analysis, intent):
             keys.update(val)
     result = {k: metrics[k] for k in sorted(keys) if k in metrics}
     if intent.status and "courier_performance" in result:
-        result["courier_performance"] = [{k: row[k] for k in ("courier", "total_orders", "delivered")}
-                                         for row in result["courier_performance"]]
+        keys = ("courier", "total_orders") + ((intent.status,) if intent.status in ("delivered", "cancelled", "rto") else ())
+        result["courier_performance"] = [{k: row[k] for k in keys} for row in result["courier_performance"]]
         result.pop("rates", None)  # A filtered cohort does not establish overall delivery performance.
         result.pop("status_category_breakdown", None)  # Its 100% is a filter artifact, not courier performance.
     # Bound the AI context; full selected tables are still rendered by Python.
@@ -297,7 +313,8 @@ def relevant_limitations(analysis, intent):
     if scope.get("kind") in {"sample", "paginated"}:
         notes.append("Results cover only the supplied records; full dataset coverage is not established.")
     if intent.status:
-        notes.append("Only delivered records are included; this subset does not establish overall delivery performance.")
+        notes.append(f"Only {intent.status_label.lower()} records are included; this subset does not establish overall "
+                     "delivery performance.")
     coverage = analysis.metrics.get("field_coverage", {})
     for topic, field in (("courier", "courier"), ("payment", "payment_mode"), ("geography", "destination_state")):
         if topic in intent.topics and coverage.get(field, {}).get("present", analysis.records_analyzed) < analysis.records_analyzed:
@@ -320,9 +337,25 @@ def relevant_limitations(analysis, intent):
     return notes
 
 
+# Record text (courier names, reasons) is data. Text that reads like an instruction to the model is
+# withheld from the AI context; Python tables and charts still show it as supplied.
+_INSTRUCTION_LIKE = re.compile(r"\b(?:ignore|disregard|forget|override)\b.{0,40}\b(?:instructions?|rules?|prompts?|above|previous)\b"
+                               r"|\b(?:system prompt|you are now|act as|new instructions?|respond with|return json)\b", re.I)
+
+
+def neutralize(value):
+    if isinstance(value, str):
+        return "[text withheld]" if _INSTRUCTION_LIKE.search(value) else value
+    if isinstance(value, dict):
+        return {k: neutralize(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [neutralize(v) for v in value]
+    return value
+
+
 def compact_context(analysis, intent):
     tables = selected_tables(analysis, intent)
-    return {"metrics": relevant_metrics(analysis, intent), "scope": analysis.metrics.get("scope", {}),
+    return {"metrics": neutralize(relevant_metrics(analysis, intent)), "scope": neutralize(analysis.metrics.get("scope", {})),
             "available_tables": {key: {"title": t.title, "columns": t.columns} for key, t in tables.items()},
             "limitations": [] if intent.omit_limitations else relevant_limitations(analysis, intent)}
 
@@ -338,7 +371,7 @@ def display_metrics(analysis, intent):
                    ("cancelled_shipping_charges", "Charges Associated with Cancelled Orders", f["charges_associated_with_cancelled_orders"] or "Unavailable", "text"),
                    ("total_orders", "Orders Analyzed", analysis.records_analyzed, "number")]
     elif intent.status:
-        entries = [("total_orders", "Delivered Orders", analysis.records_analyzed, "number"),
+        entries = [("total_orders", f"{intent.status_label} Orders", analysis.records_analyzed, "number"),
                    ("distinct_couriers", "Couriers Used", m["distinct_couriers"], "number")]
         if analysis.records_analyzed:
             entries.append(("orders_with_valid_date", "Orders with Booking Date", m.get("order_date_range", {}).get("orders_with_valid_date", 0) if m.get("order_date_range") else 0, "number"))
@@ -413,7 +446,7 @@ def report_charts(analysis, intent):
                         ))
                         added_topics.add("courier")
                 else:
-                    value = "delivered" if intent.status else "cancelled" if "cancellation" in intent.topics and not intent.status else "total_orders"
+                    value = (intent.status if intent.status in ("delivered", "cancelled", "rto") else "total_orders") if intent.status else "cancelled" if "cancellation" in intent.topics else "total_orders"
                     if value == "cancelled" and all(float(r.get("cancelled", 0)) == 0 for r in m.get("courier_performance", [])):
                         value = "total_orders"
                     add("courier_orders", "Orders by Courier", m["courier_performance"], "courier", value, value.replace("_", " ").title(), ctype)
@@ -475,7 +508,7 @@ def report_charts(analysis, intent):
 
         # 3. Bar / circular / area chart: Courier Performance (if not already filled)
         if not intent.single_chart and len(charts) < 2 and "courier" in intent.topics and not intent.chart_courier_charges:
-            value = "delivered" if intent.status else "cancelled" if "cancellation" in intent.topics and not intent.status else "total_orders"
+            value = (intent.status if intent.status in ("delivered", "cancelled", "rto") else "total_orders") if intent.status else "cancelled" if "cancellation" in intent.topics else "total_orders"
             if value == "cancelled" and all(float(r.get("cancelled", 0)) == 0 for r in m.get("courier_performance", [])):
                 value = "total_orders"
             if intent.wants_area:
@@ -538,9 +571,9 @@ def report_charts(analysis, intent):
 
 def deterministic_narrative(analysis, intent):
     empty = intent.status and not analysis.records_analyzed
-    text = ("No delivered shipments are available in the supplied data." if empty else
+    text = (f"No {intent.status_label.lower()} shipments are available in the supplied data." if empty else
             "The requested comparisons cover the supplied shipment records.")
-    return {"title": "Delivered Shipment Dashboard" if empty else "Shipment Comparisons",
+    return {"title": f"{intent.status_label} Shipment Dashboard" if empty else "Shipment Comparisons",
             "executive_summary": {"heading": "Overview", "paragraphs": [text]},
             "sections": [], "findings": [], "recommendations": [], "data_limitations": []}
 

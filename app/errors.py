@@ -55,6 +55,11 @@ class InvalidPromptError(AppError):
     category = "validation"
 
 
+class UnsupportedRequestError(InvalidPromptError):
+    """The request is clear, but the supplied data cannot answer it (details name what is missing)."""
+    code = "unsupported_request"
+
+
 # --- Report generation errors (AI service side) -----------------------------
 
 class AIConfigurationError(AppError):

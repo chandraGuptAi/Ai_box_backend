@@ -6,12 +6,15 @@ and render chart images on demand.
 from __future__ import annotations
 
 from typing import Any
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from app.models.report_schema import ReportChart
 from app.skills.chart_skill import chart_skill
 from app.skills.prompt_skill import prompt_skill
+from app.prompts.registry import get_report_definition
+from app.services.report_service import ReportService
+from app.api.report_routes import get_report_service
 
 router = APIRouter(prefix="/api/skills/charts", tags=["Skills - Charts"])
 prompt_router = APIRouter(prefix="/api/skills/prompt", tags=["Skills - Prompts"])
@@ -109,6 +112,7 @@ async def render_chart_raw_png(chart: ReportChart) -> Response:
 class ValidatePromptRequest(BaseModel):
     prompt: str = Field(description="The user-provided prompt to validate.")
     report_type: str = Field(default="shipment", description="Report type context (e.g. shipment, paid_remittance, pending_remittance).")
+    data: dict[str, Any] | None = Field(default=None, description="Optional dataset to produce tailored suggestions.")
 
 
 class ValidatePromptResponse(BaseModel):
@@ -120,6 +124,12 @@ class ValidatePromptResponse(BaseModel):
     suggested_prompts: list[str]
 
 
+class PromptSuggestionsRequest(BaseModel):
+    report_type: str = Field(default="shipment", description="Report type context.")
+    prompt: str | None = Field(default=None, description="Optional initial user prompt.")
+    data: dict[str, Any] | None = Field(default=None, description="Optional dataset to ground suggestions.")
+
+
 @prompt_router.get("/blueprint", summary="Get Prompt Skill Blueprint")
 async def get_prompt_skill_blueprint() -> dict[str, Any]:
     """Return the prompt skill specification and capabilities."""
@@ -127,9 +137,26 @@ async def get_prompt_skill_blueprint() -> dict[str, Any]:
 
 
 @prompt_router.post("/validate", response_model=ValidatePromptResponse, summary="Validate a user prompt")
-async def validate_user_prompt(req: ValidatePromptRequest) -> ValidatePromptResponse:
+async def validate_user_prompt(
+    req: ValidatePromptRequest,
+    report_service: ReportService = Depends(get_report_service),
+) -> ValidatePromptResponse:
     """Check if the user input contains valid analytical intent for reports or is gibberish/off-topic."""
     res = prompt_skill.validate(req.prompt, report_type=req.report_type)
+    if not res.is_valid and req.data:
+        try:
+            definition = get_report_definition(req.report_type)
+            ai_suggs = await report_service._generate_data_tailored_suggestions(
+                prompt=req.prompt,
+                report_type=req.report_type,
+                data=req.data,
+                definition=definition,
+                validation_reason=res.reason,
+            )
+            if ai_suggs:
+                res.suggested_prompts = ai_suggs
+        except Exception:
+            pass
     return ValidatePromptResponse(**res.to_dict())
 
 
@@ -138,4 +165,28 @@ async def get_prompt_suggestions(report_type: str = Query(default="shipment")) -
     """Get curated prompt suggestions tailored to a specific report type."""
     suggestions = prompt_skill.get_suggestions(report_type)
     return {"report_type": report_type, "suggestions": suggestions}
+
+
+@prompt_router.post("/suggestions", summary="Get AI-Tailored Prompt Suggestions with Data")
+async def get_data_tailored_prompt_suggestions(
+    req: PromptSuggestionsRequest,
+    report_service: ReportService = Depends(get_report_service),
+) -> dict[str, Any]:
+    """Get prompt suggestions, tailored with DeepSeek if dataset is provided."""
+    suggestions = prompt_skill.get_suggestions(req.report_type)
+    if req.data:
+        try:
+            definition = get_report_definition(req.report_type)
+            ai_suggs = await report_service._generate_data_tailored_suggestions(
+                prompt=req.prompt or "",
+                report_type=req.report_type,
+                data=req.data,
+                definition=definition,
+                validation_reason="user_requested_suggestions",
+            )
+            if ai_suggs:
+                suggestions = ai_suggs
+        except Exception:
+            pass
+    return {"report_type": req.report_type, "suggestions": suggestions}
 

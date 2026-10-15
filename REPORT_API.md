@@ -29,6 +29,54 @@ Angular must use HttpClient with `observe: 'response'` to read the generation he
 
 Legacy POST `/api/reports/export/pdf` and `/export/docx` continue accepting complete documents. They render the caller-supplied payload, not stored private data. New clients should use downloads to guarantee they export the saved original. `/types` and `/health` remain available.
 
+## Prompt-driven analysis plan (additive fields)
+
+Every shipment request is turned into a validated analysis plan before any number is calculated (`app/analysis/`):
+prompt + current data -> plan -> Python results -> verification -> optional single DeepSeek narrative. All new fields are
+optional and additive; existing clients and saved reports keep working, and `schema_version` stays `2.0`.
+
+- `structured_report.plan`: what was applied. `filters` (field, op, value, human-readable `description`), `date_range`
+  (`from`, `to`, the user's words in `requested`, and the resolution `basis`, e.g. relative to the payload's `as_of`),
+  `tables`, `charts`, `detail_level` (`summary`/`standard`/`detailed`), `lookup`, `ai_narrative`, `unsupported`
+  (`requested`, `reason`, `missing`) and interpretation `notes`.
+- `structured_report.scope` adds `records_supplied`, `api_reported_total` (e.g. `getOrderList.total`),
+  `account_total_orders` (`account_summary.all_orders`), `records_after_filters`, `is_partial`, `api_filter`
+  (`report_filter` as supplied), `requested_period`, `supplied_data_period`, `excluded_missing_values`,
+  `data_fingerprint` and a plain-language `statement`. A partial or paginated response is never described as complete.
+- `structured_report.verification`: `status` (`passed` / `passed_with_corrections`), `checks` (one per metric group,
+  chart, table and KPI, each `passed` / `failed` / `not_verifiable`), `failed_and_removed` and
+  `not_independently_verified`. Figures are recounted from the scoped records with separate code; a figure that does not
+  match is removed (charts get a `chart_notes` entry). Figures that cannot be recomputed (for example account counters
+  copied from the API, or insights KPI cards) are listed as not independently verified rather than claimed accurate.
+- Tables (`tables[]` and table blocks) may add `id`, `column_meta` (`key`, `label`, `type`
+  `text|number|currency|percent|date`, `align`, `decimals`, `currency` = null meaning "as supplied"), `values` (the same
+  cells as typed numbers/strings/null, parallel to `rows`), `total_rows`, `truncated` and `note`. `rows` remain display
+  strings for existing renderers and the Word/PDF exports. Detail tables show at most 200 rows; when more match,
+  `truncated` is true and `note` says how many were shown (the note is also printed in Word/PDF).
+
+Behaviour:
+
+- Filters understood from the prompt: statuses ("delivered shipments", "except cancelled"), payment modes
+  ("COD and Prepaid"), couriers/states/cities (matched only against values present in the current data), numeric
+  thresholds on shipping charge, invoice value, collectable amount and weight ("charges above ₹1,000", "between 500 and
+  2,000"), and periods ("last month", "last 7 days", "September 2026", explicit dates). Periods filter by order date and
+  are resolved against the payload's `as_of` (else today's date, which the `basis` states). Rates and distributions are
+  never computed on a status-filtered denominator.
+- Record lookups ("Show cancelled orders with reasons in a table", "Show shipping charges above ₹1,000") and empty
+  scopes are answered by Python with zero DeepSeek calls. Chart-only requests remain zero-call.
+- Focused (non-"detailed") requests get no unrequested charts, and record lookups no recommendations. "Detailed",
+  "complete", "management" reports keep the full layout.
+- Requests the data cannot answer return HTTP 422 `unsupported_request` with `details.unsupported` and
+  `details.available_fields` (e.g. profit, collected revenue, a period when no record has an order date). Partly
+  answerable requests return the report with `Not available: ...` limitations.
+- Narrative sentences claiming that data is unavailable when the scoped records contain it (e.g. "No cancellation
+  reasons are available") are removed, and `generation.notice` says so.
+- `previous_report` content is merged only when it was built from the same records (`data_fingerprint`) and the same
+  `customer_id`; otherwise the new report stands alone and `generation.notice` explains why.
+- `REPORT_AI_PLANNER=true` (default false) allows one extra, small DeepSeek call when the rules cannot read a condition
+  the user stated; its JSON plan is validated against the same field/operator/value vocabulary. No code or query from
+  DeepSeek is ever executed.
+
 ## Calculations and scope
 
 All rates use supplied records, never unrelated summary counters. Paginated `getOrderList: {data: [...], total: 1000}` retains total separately in scope.reported_total. `dataset_scope: "sample"` explicitly marks a supplied sample; a bare list is labelled supplied_records, never presumed a full dataset. Sanitized AI samples are qualitative only.

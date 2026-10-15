@@ -223,6 +223,8 @@ def _add_data_table(doc: DocumentType, table: ReportTable) -> None:
         _add_table(doc, table.columns, table.rows)
     else:
         doc.add_paragraph("No data available.")
+    if getattr(table, "note", None):  # e.g. rows limited for display; never silently truncated
+        doc.add_paragraph(table.note)
 
 
 def _add_table(doc: DocumentType, columns: list[str], rows: list[list[str]], align_numbers: bool = True) -> None:

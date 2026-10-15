@@ -88,9 +88,10 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "payment_mode": (
         "paymenttype", "paymentmode", "paymentmethod", "paymentcategory", "codprepaid", "ordertypepayment",
     ),
+    # Bigship sends orderCancelReason (structured) and orderCancelRemark (free text): reason first.
     "cancellation_reason": (
-        "cancellationreason", "cancelreason", "reasonforcancellation", "cancelledreason",
-        "cancellationremark", "cancellationremarks", "cancelremark", "cancelremarks",
+        "ordercancelreason", "cancellationreason", "cancelreason", "reasonforcancellation", "cancelledreason",
+        "cancellationremark", "cancellationremarks", "cancelremark", "cancelremarks", "ordercancelremark",
     ),
     "destination_state": (
         "state", "deliverystate", "consigneestate", "shippingstate", "destinationstate", "customerstate",
@@ -108,10 +109,15 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
         "bookingdate", "orderdatetime", "createdon",
     ),
     "order_value": (
-        "invoiceamount", "invoicevalue", "ordervalue", "orderamount", "totalamount", "productvalue",
-        "totalordervalue", "shipmentvalue",
+        "invoicetotalamount", "invoiceamount", "invoicevalue", "ordervalue", "orderamount", "totalamount",
+        "productvalue", "totalordervalue", "shipmentvalue",
     ),
-    "weight": ("weight", "chargeableweight", "deadweight", "totalweight", "actualweight", "packageweight"),
+    # Separate measures: never substituted for one another.
+    "charge": ("totalcharge", "shippingcharge", "shippingcharges", "freightcharge", "freightcharges"),
+    "collectable_amount": ("collectableamount", "collectablevalue", "codamount", "codcollectableamount"),
+    "pickup_date": ("pickupdate", "pickeddate", "pickedupdate", "pickupdatetime", "pickupdoneat"),
+    "delivery_date": ("deliverydate", "delivereddate", "deliveredat", "deliverydatetime", "deliveredon"),
+    "weight": ("weightkg", "weight", "chargeableweight", "deadweight", "totalweight", "actualweight", "packageweight"),
     "order_id": ("orderid", "mastercustomorderid", "order_id", "customorderid", "id"),
     "awb_number": ("awbnumber", "awb_number", "awbno", "referencenumber", "reference_number", "lrnumber", "lr_number", "trackingnumber"),
     "product_name": ("productsname", "products_name", "productname", "product_name", "itemname", "item_name", "description"),
@@ -129,7 +135,8 @@ _DATE_FORMATS = (
     "%d %b %Y", "%d %B %Y", "%d-%b-%Y", "%d %b %Y %H:%M", "%d %b %Y %I:%M %p", "%b %d, %Y",
 )
 
-STATUS_CATEGORIES = ("delivered", "in_transit", "pending", "cancelled", "rto", "exception", "other", "unknown")
+# Lost is its own outcome: Bigship reports "lost" and "undelivered" as separate account counters.
+STATUS_CATEGORIES = ("delivered", "in_transit", "pending", "cancelled", "rto", "exception", "lost", "other", "unknown")
 _CATEGORY_LABELS = {
     "delivered": "Delivered",
     "in_transit": "In Transit",
@@ -137,17 +144,10 @@ _CATEGORY_LABELS = {
     "cancelled": "Cancelled",
     "rto": "RTO / Returned",
     "exception": "Delivery Exception (NDR)",
+    "lost": "Lost",
     "other": "Other",
     "unknown": "Status Missing",
 }
-_EXCEPTION_KEYWORDS = ("undeliver", "not delivered", "ndr", "failed", "lost", "damage", "exception", "delivery attempt")
-_PENDING_KEYWORDS = (
-    "not picked", "pickup pending", "pending", "unshipped", "new", "booked", "manifest", "ready",
-    "scheduled", "awaiting", "processing", "created", "open", "pickup",
-)
-_TRANSIT_KEYWORDS = ("transit", "picked", "shipped", "dispatch", "reached", "connected", "forwarded", "hub", "out for")
-
-
 # --- Extraction & sanitisation ----------------------------------------------
 
 def extract_orders(data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -211,6 +211,59 @@ def extract_orders(data: dict[str, Any]) -> list[dict[str, Any]]:
     return candidate
 
 
+_ORDER_KEYS = ("getOrderList", "orders", "order_list", "shipments")
+_PAGE_KEYS = ("data", "orders", "items", "records", "list", "rows")
+
+
+def _orders_path(data: dict[str, Any]) -> tuple[Any, ...] | None:
+    """Key path to the order list, found with the same precedence as ``extract_orders``."""
+    def in_container(container, prefix):
+        for key in _ORDER_KEYS:
+            if key in container and container[key] is not None:
+                return prefix + (key,)
+        return None
+
+    path = in_container(data, ())
+    if path is None and isinstance(data.get("data"), dict):
+        path = in_container(data["data"], ("data",))
+    if path is None:
+        def search(obj, prefix, depth):
+            if depth > 4 or not isinstance(obj, dict):
+                return None
+            found = in_container(obj, prefix)
+            for key, value in obj.items():
+                if found is not None:
+                    break
+                if isinstance(value, dict):
+                    found = search(value, prefix + (key,), depth + 1)
+            return found
+        path = search(data, (), 0)
+    if path is None:
+        return None
+    node = data
+    for key in path:
+        node = node[key]
+    if isinstance(node, dict):
+        inner = next((k for k in _PAGE_KEYS if isinstance(node.get(k), list)), None)
+        if inner is not None:
+            path += (inner,)
+    return path
+
+
+def replace_orders(data: dict[str, Any], records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Shallow copy of the payload whose order list is ``records``; every other key is kept as supplied."""
+    path = _orders_path(data)
+    if path is None:
+        raise InvalidReportDataError("Shipment data must contain an order list at data.getOrderList.")
+
+    def rebuild(node, keys):
+        copy = dict(node)
+        copy[keys[0]] = list(records) if len(keys) == 1 else rebuild(node[keys[0]], keys[1:])
+        return copy
+
+    return rebuild(data, path)
+
+
 def _norm_key(key: Any) -> str:
     return re.sub(r"[^a-z0-9]", "", str(key).lower())
 
@@ -219,8 +272,10 @@ def _flatten(record: dict[str, Any], prefix: str = "", depth: int = 0, out: dict
     out = {} if out is None else out
     for key, value in record.items():
         flat_key = prefix + _norm_key(key)
+        if isinstance(value, list) and len(value) == 1 and isinstance(value[0], dict):
+            value = value[0]  # e.g. "consignee": [{"city": ...}]; longer lists are not attributable to one field
         if isinstance(value, dict):
-            if depth < 2:
+            if depth < 3:
                 _flatten(value, flat_key, depth + 1, out)
         elif not isinstance(value, list):
             out.setdefault(flat_key, value)
@@ -289,11 +344,13 @@ def categorize_status(status: str | None) -> str:
 # Explicit text statuses supported by this backend. Unknown codes are not guessed.
 STATUS_MAPPING = {
     **dict.fromkeys(("delivered", "delivery completed", "successfully delivered"), "delivered"),
-    **dict.fromkeys(("cancelled", "canceled", "order cancelled", "shipment cancelled"), "cancelled"),
-    **dict.fromkeys(("in transit", "out for delivery", "shipped", "dispatched", "picked up", "reached hub"), "in_transit"),
-    **dict.fromkeys(("pending", "new", "booked", "pickup pending", "not picked", "not picked up", "unshipped", "manifested", "processing", "created", "ready to ship"), "pending"),
+    **dict.fromkeys(("cancelled", "canceled", "cancel", "order cancelled", "shipment cancelled"), "cancelled"),
+    **dict.fromkeys(("in transit", "out for delivery", "shipped", "dispatched", "picked up", "picked", "reached hub"), "in_transit"),
+    **dict.fromkeys(("pending", "new", "booked", "pickup pending", "pickup scheduled", "not picked", "not picked up",
+                     "not pickup", "unshipped", "manifested", "processing", "created", "ready to ship"), "pending"),
     **dict.fromkeys(("rto", "rto initiated", "rto in transit", "rto delivered", "returned", "return to origin"), "rto"),
-    **dict.fromkeys(("ndr", "undelivered", "not delivered", "failed", "lost", "damaged", "exception", "delivery failed"), "exception"),
+    **dict.fromkeys(("ndr", "undelivered", "not delivered", "failed", "damaged", "exception", "delivery failed"), "exception"),
+    **dict.fromkeys(("lost", "shipment lost", "lost in transit"), "lost"),
 }
 
 
@@ -327,6 +384,9 @@ class ShipmentOrder:
     awb_number: str | None = None
     product_name: str | None = None
     charge: float | None = None
+    collectable_amount: float | None = None
+    pickup_date: date | None = None
+    delivery_date: date | None = None
 
     def to_sample(self) -> dict[str, Any]:
         """Sanitised representation sent to the AI as a qualitative example."""
@@ -350,11 +410,23 @@ class ShipmentOrder:
         return {key: value for key, value in sample.items() if value is not None}
 
 
+# Nested destination keys not in the alias list ("consigneeaddressdetailscity", "receivercity"). Only
+# recipient-side prefixes qualify, so pickup, warehouse or seller cities are never read as destinations.
+_DESTINATION_KEY = {
+    "destination_city": re.compile(r"^(?:consignee|delivery|shipping|customer|drop|destination|receiver|buyer|shipto)[a-z0-9]*city$"),
+    "destination_state": re.compile(r"^(?:consignee|delivery|shipping|customer|drop|destination|receiver|buyer|shipto)[a-z0-9]*state$"),
+}
+
+
 def _lookup(flat: dict[str, Any], field: str) -> Any:
     for alias in FIELD_ALIASES[field]:
         value = flat.get(alias)
         if value is not None and value != "":
             return value
+    pattern = _DESTINATION_KEY.get(field)
+    if pattern:
+        return next((v for k, v in flat.items() if pattern.match(k) and v not in (None, "")
+                     and not re.search(r"pickup|origin|seller|warehouse|return", k)), None)
     return None
 
 
@@ -376,7 +448,10 @@ def parse_order(record: dict[str, Any]) -> ShipmentOrder:
         order_id=scrub_text(_lookup(flat, "order_id"), 40),
         awb_number=scrub_text(_lookup(flat, "awb_number"), 40),
         product_name=scrub_text(_lookup(flat, "product_name"), 80),
-        charge=parse_number(record.get("totalCharge") or record.get("shipping_charge")),
+        charge=parse_number(_lookup(flat, "charge")),
+        collectable_amount=parse_number(_lookup(flat, "collectable_amount")),
+        pickup_date=parse_date(_lookup(flat, "pickup_date")),
+        delivery_date=parse_date(_lookup(flat, "delivery_date")),
     )
 
 
@@ -443,6 +518,7 @@ def compute_metrics(orders: list[ShipmentOrder]) -> dict[str, Any]:
             "cancelled": stats["cancelled"],
             "rto": stats["rto"],
             "exception": stats["exception"],
+            "lost": stats["lost"],
             "delivery_rate_percent": _pct(stats["delivered"], courier_total),
             "cancellation_rate_percent": _pct(stats["cancelled"], courier_total),
             "rto_rate_percent": _pct(stats["rto"], courier_total),
@@ -501,7 +577,7 @@ def compute_metrics(orders: list[ShipmentOrder]) -> dict[str, Any]:
         ],
         "rates": {
             f"{category}_percent": _pct(category_counts[category], total)
-            for category in ("delivered", "in_transit", "pending", "cancelled", "rto", "exception")
+            for category in ("delivered", "in_transit", "pending", "cancelled", "rto", "exception", "lost")
         },
         "status_breakdown": _breakdown((o.status for o in orders), "status", total, 15),
         "cancellation_reasons": cancellation_reasons,
@@ -582,7 +658,7 @@ def build_key_metrics(metrics: dict[str, Any]) -> list[KeyMetric]:
     by_category = {item["category"]: item for item in metrics["status_category_breakdown"]}
     items = [KeyMetric(label="Total Orders", value=_fmt_int(total))]
 
-    for category in ("delivered", "in_transit", "pending", "cancelled", "rto", "exception"):
+    for category in ("delivered", "in_transit", "pending", "cancelled", "rto", "exception", "lost"):
         entry = by_category.get(category)
         if entry or category in ("delivered", "cancelled", "rto"):
             count = entry["count"] if entry else 0
@@ -680,12 +756,17 @@ def analyze_shipments(data: dict[str, Any]) -> AnalysisResult:
         acc = {k: container[k] for k in ("all_orders", "delivered", "cancel", "in_transit", "undelivered", "rto_in_transit", "rto_delivered", "lost") if k in container}
     if isinstance(acc, dict) and isinstance(acc.get("all_orders"), (int, float)) and acc["all_orders"] > 0:
         all_ord = acc["all_orders"]
-        bench_rows = [
-            ["Delivered", _fmt_int(acc.get("delivered", 0)), f"{_pct(acc.get('delivered', 0), all_ord)}", "Completed successfully"],
-            ["Cancelled", _fmt_int(acc.get("cancel", 0)), f"{_pct(acc.get('cancel', 0), all_ord)}", "Lost prior to dispatch/transit"],
-            ["In Transit", _fmt_int(acc.get("in_transit", 0)), f"{_pct(acc.get('in_transit', 0), all_ord)}", "Active on carrier network"],
-            ["RTO (In Transit + Delivered)", _fmt_int(acc.get("rto_in_transit", 0) + acc.get("rto_delivered", 0)), f"{_pct(acc.get('rto_in_transit', 0) + acc.get('rto_delivered', 0), all_ord)}", "Returned / Returning to origin"],
-        ]
+        # Account counters come from the API, not the supplied records. A counter the API did not send is
+        # left out rather than shown as 0; the share denominator is the API's all_orders.
+        bench_rows = []
+        for key, label, note in (("delivered", "Delivered", "Completed successfully"),
+                                 ("cancel", "Cancelled", "Cancelled before delivery"),
+                                 ("in_transit", "In Transit", "Active on carrier network")):
+            if isinstance(acc.get(key), (int, float)):
+                bench_rows.append([label, _fmt_int(acc[key]), f"{_pct(acc[key], all_ord)}", note])
+        if any(isinstance(acc.get(k), (int, float)) for k in ("rto_in_transit", "rto_delivered")):
+            rto = acc.get("rto_in_transit", 0) + acc.get("rto_delivered", 0)
+            bench_rows.append(["RTO (In Transit + Delivered)", _fmt_int(rto), f"{_pct(rto, all_ord)}", "Returned / Returning to origin"])
         if acc.get("undelivered", 0) > 0:
             bench_rows.append(["Undelivered (NDR)", _fmt_int(acc["undelivered"]), f"{_pct(acc['undelivered'], all_ord)}", "Failed delivery attempt, needs seller action"])
         if acc.get("lost", 0) > 0:

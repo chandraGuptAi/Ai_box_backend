@@ -109,7 +109,7 @@ def derived_percentages(metrics):
             add(f"{group}[{i}].percent", item.get("count"), total)
     scoped_status = metrics.get("scope", {}).get("status_filter")
     for i, item in enumerate(metrics.get("courier_performance", [])):
-        for category in ("delivered", "in_transit", "pending", "cancelled", "rto", "exception"):
+        for category in ("delivered", "in_transit", "pending", "cancelled", "rto", "exception", "lost"):
             if scoped_status and category == scoped_status:
                 continue
             add(f"courier_performance[{i}].{category}_percent", item.get(category), item.get("total_orders"))

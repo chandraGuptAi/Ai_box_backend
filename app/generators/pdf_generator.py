@@ -461,12 +461,16 @@ def generate_pdf(report: ReportDocument) -> bytes:
                     t_title = block.title or section.title
                     rendered_tables.add(t_title.strip().lower())
                     append_table(t_title, block.columns, block.rows)
+                    if block.note:  # e.g. rows limited for display; never silently truncated
+                        story.append(Paragraph(escape(block.note), styles["body"]))
 
     # Also render any tables from report.tables that were not inside sections
     if report.tables:
         for table in report.tables:
             if table.title.strip().lower() not in rendered_tables:
                 append_table(table.title, table.columns, table.rows)
+                if table.note:
+                    story.append(Paragraph(escape(table.note), styles["body"]))
                 rendered_tables.add(table.title.strip().lower())
 
     # 6. Key Findings / Attention Panel

@@ -105,6 +105,9 @@ class Settings:
     pdf_font_regular: str
     pdf_font_bold: str
     deepseek_compact_output_tokens: int = 1600
+    # Ask DeepSeek for a (validated) analysis plan only when the rules cannot read a stated condition.
+    # Off by default: it is a second, small paid call.
+    report_ai_planner: bool = False
     deepseek_input_cost_per_million: float | None = None
     deepseek_output_cost_per_million: float | None = None
 
@@ -142,6 +145,7 @@ class Settings:
             pdf_font_regular=_str("PDF_FONT_REGULAR"),
             pdf_font_bold=_str("PDF_FONT_BOLD"),
             deepseek_compact_output_tokens=_int("DEEPSEEK_COMPACT_OUTPUT_TOKENS", 1600, minimum=512),
+            report_ai_planner=_bool("REPORT_AI_PLANNER", False),
             deepseek_input_cost_per_million=_float("DEEPSEEK_INPUT_COST_PER_MILLION", 0) if _str("DEEPSEEK_INPUT_COST_PER_MILLION") else None,
             deepseek_output_cost_per_million=_float("DEEPSEEK_OUTPUT_COST_PER_MILLION", 0) if _str("DEEPSEEK_OUTPUT_COST_PER_MILLION") else None,
         )

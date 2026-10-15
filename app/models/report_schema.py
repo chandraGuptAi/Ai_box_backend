@@ -172,10 +172,28 @@ class KeyMetric(BaseModel):
     note: Text | None = Field(default=None, max_length=300)
 
 
+class TableColumn(BaseModel):
+    """How a client should format and align one column; `values` keep the raw numbers."""
+    key: str = Field(..., max_length=60)
+    label: Text = Field(..., max_length=100)
+    type: Literal["text", "number", "currency", "percent", "date"] = "text"
+    align: Literal["left", "right", "center"] = "left"
+    decimals: int | None = Field(default=None, ge=0, le=4)
+    currency: Text | None = None     # None: as supplied in the source data (never inferred)
+
+
 class ReportTable(BaseModel):
     title: Text = Field(..., min_length=1, max_length=200)
     columns: list[Annotated[Text, Field(max_length=100)]] = Field(..., min_length=1, max_length=12)
+    # Display strings (used by Word/PDF and existing clients).
     rows: list[list[Annotated[Text, Field(max_length=500)]]] = Field(default_factory=list, max_length=200)
+    # Optional, additive metadata (absent on tables saved before it existed).
+    id: str | None = Field(default=None, max_length=80)
+    column_meta: list[TableColumn] | None = Field(default=None, max_length=12)
+    values: list[list[float | int | str | None]] | None = Field(default=None, max_length=200)
+    total_rows: int | None = Field(default=None, ge=0, description="Rows that matched before any display limit.")
+    truncated: bool = False
+    note: Text | None = Field(default=None, max_length=500)
 
     @model_validator(mode="after")
     def _rows_match_columns(self) -> ReportTable:
@@ -184,6 +202,11 @@ class ReportTable(BaseModel):
                 raise ValueError(
                     f"Row {index} has {len(row)} cells but the table has {len(self.columns)} columns."
                 )
+        if self.values is not None and (len(self.values) != len(self.rows)
+                                        or any(len(v) != len(self.columns) for v in self.values)):
+            raise ValueError("Typed table values must have the same shape as the display rows.")
+        if self.column_meta is not None and len(self.column_meta) != len(self.columns):
+            raise ValueError("column_meta must describe every column.")
         return self
 
 
@@ -436,6 +459,10 @@ class StructuredReport(StrictModel):
     scope: dict[str, Any]
     company_name: Text | None = None
     customer_id: Text | None = None
+    # Optional, additive: the validated analysis plan that shaped this report, and the result of
+    # checking every Python-calculated figure against the current request's data.
+    plan: dict[str, Any] | None = None
+    verification: dict[str, Any] | None = None
 
 ReportDocument.model_rebuild()
 ReportResponse.model_rebuild()

@@ -178,3 +178,69 @@ def test_report_service_rejects_off_topic():
 
     asyncio.run(_run())
 
+
+def test_report_service_uses_deepseek_for_data_tailored_suggestions():
+    class FakeDeepSeekForSuggestions:
+        def __init__(self):
+            self.called = False
+            self.last_messages = None
+
+        async def generate_json(self, messages, max_tokens=None):
+            self.called = True
+            self.last_messages = messages
+            return {
+                "suggested_prompts": [
+                    "Analyse delivery performance for Delhivery and Ekart across top destinations.",
+                    "Show RTO failure breakdown and exception rates.",
+                    "Compare COD vs prepaid delivery success in Mumbai.",
+                ]
+            }
+
+    async def _run():
+        fake_ai = FakeDeepSeekForSuggestions()
+        service = ReportService(fake_ai)
+        req = ReportRequest(
+            report_type="shipment",
+            prompt="asdfghjkl",  # Gibberish prompt
+            data={
+                "getOrderList": [
+                    {"awb": "1", "current_status": "Delivered", "courier_name": "Delhivery", "city": "Mumbai"},
+                    {"awb": "2", "current_status": "RTO Delivered", "courier_name": "Ekart", "city": "Delhi"},
+                ]
+            },
+        )
+        with pytest.raises(InvalidPromptError) as exc_info:
+            await service.generate_report(req)
+
+        assert fake_ai.called is True
+        # Verify that DeepSeek received the dataset summary
+        user_msg = fake_ai.last_messages[1]["content"]
+        assert "Delhivery" in user_msg or "records_analyzed" in user_msg or "status_counts" in user_msg
+
+        # Verify that the invalid prompt error received the DeepSeek suggestions
+        suggested = exc_info.value.details.get("suggested_prompts", [])
+        assert len(suggested) == 3
+        assert "Delhivery and Ekart" in suggested[0]
+
+    asyncio.run(_run())
+
+
+def test_api_post_data_tailored_prompt_suggestions():
+    resp = client.post(
+        "/api/skills/prompt/suggestions",
+        json={
+            "report_type": "shipment",
+            "prompt": "hi",
+            "data": {
+                "getOrderList": [
+                    {"awb": "1", "current_status": "Delivered", "courier_name": "Delhivery"},
+                ]
+            },
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "suggestions" in data
+    assert len(data["suggestions"]) > 0
+
+

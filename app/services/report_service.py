@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from logging.handlers import RotatingFileHandler
 import json
@@ -11,7 +12,8 @@ import uuid
 import secrets
 import time
 import threading
-from collections import OrderedDict
+from collections import Counter, OrderedDict
+from typing import Any
 from fastapi import HTTPException
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,8 +21,12 @@ from pathlib import Path
 from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 
+from app.analysis import (ai_plan_messages, annotate_table, build_plan_tables, dataset_scope, get_vocabulary, interpret,
+                          matching_rows, merge_ai_plan, plan_narrative, remove_false_absence_claims, verify_report)
+from app.analysis.interpreter import report_title
 from app.config import BASE_DIR, Settings, settings
-from app.errors import AIResponseError, ReportExportError, InvalidReportDataError, InvalidPromptError
+from app.errors import (AIResponseError, AppError, ReportExportError, InvalidReportDataError, InvalidPromptError,
+                        UnsupportedRequestError)
 from app.skills.prompt_skill import prompt_skill
 from app.generators.docx_generator import generate_docx
 from app.generators.pdf_generator import generate_pdf
@@ -34,7 +40,7 @@ from app.models.report_schema import (
     StructuredNarrative, StructuredReport, StructuredSummary, DisplaySection,
     ParagraphBlock, BulletBlock, TableBlock, DisplayMetric, ReportChart, ChartDataset,
 )
-from app.charts import build_charts, chart_planning_instructions, get_adapter, plan_charts
+from app.charts import ChartRequest, build_charts, chart_planning_instructions, get_adapter, plan_charts
 from app.prompts.base import build_messages
 from app.prompts.report_intent import (detect_intent, scope_analysis, selected_tables, display_metrics,
                                       report_charts, deterministic_narrative, shape_narrative, relevant_metrics)
@@ -160,6 +166,67 @@ def _normalize_structure(raw):
     }
 
 
+_TOPICS = ("financial", "courier", "payment", "cancellation", "geography", "exception", "status")
+
+
+def _plan_intent(intent, plan, vocab):
+    """Let the validated plan decide scope and which sections appear; formatting choices stay with the intent."""
+    status = plan.single_status(vocab.status_field)
+    topics = list(intent.topics)
+    topics += [t for t in plan.topics if t in _TOPICS and t not in topics]
+    if plan.lookup and status:
+        topics = [t for t in topics if t != "status"] or ["courier"]  # a one-status summary table says nothing
+    if plan.detail_level != "detailed" and any(t.comparison for t in plan.tables):
+        topics = []  # the comparison table answers the request; no unrelated overview tables
+    changes = {"status": status, "topics": tuple(topics)}
+    if plan.detail_level != "detailed" or plan.lookup:
+        # Unrequested charts are not added to focused requests; a record list needs no recommendations.
+        changes.update(focused=True, charts=intent.charts and plan.wants_charts,
+                       recommendations=intent.recommendations and not plan.lookup)
+    return replace(intent, **changes)
+
+
+_COMPARE = re.compile(r"\b(?:compar\w*|vs\.?|versus|against)\b")
+
+
+def _comparison_chart(plan, chart_plan, adapter, prompt):
+    """The chart for a requested comparison: same grouping and measure as its table, computed by the chart engine."""
+    spec = next((t for t in plan.tables if t.kind == "grouped" and t.comparison), None)
+    if spec is None or not (plan.wants_charts or _COMPARE.search((prompt or "").lower())):
+        return None
+    rate = next((m for m in spec.columns if adapter.measures[m].agg == "rate"), None)
+    value = rate or next((m for m in spec.columns if m != adapter.default_measure), adapter.default_measure)
+    requested = {r.type for r in chart_plan.requests}
+    if spec.series:
+        kind = next((k for k in ("heatmap", "stacked_bar", "grouped_bar") if k in requested), "grouped_bar")
+        if kind == "stacked_bar" and not adapter.measures[value].additive:
+            kind = "grouped_bar"  # rates cannot be stacked
+    else:
+        kind = next((k for k in ("horizontal_bar", "line", "bar") if k in requested), "bar")
+    return ChartRequest(type=kind, dimension=spec.group_by, series=spec.series, measure=value,
+                        clause=(prompt or "")[:160], source="rule")
+
+
+def _plan_guidance(plan, scope, vocab, adapter):
+    """Plan facts for the single DeepSeek call: what the data covers, how long to be, what is unavailable."""
+    text = ""
+    parts = plan.describe_scope(adapter, vocab)
+    if parts:
+        text += ("The dataset is already filtered to: " + "; ".join(parts) + ". Describe results as this subset only; "
+                 "never generalise them to all shipments. ")
+    if scope and scope.get("is_partial"):
+        text += "The supplied records are a partial extract of the account; never describe them as all orders. "
+    if plan.detail_level == "standard":
+        text += "Answer only what was asked: at most three short sections and three findings, no generic advice. "
+    if any(t.comparison for t in plan.tables):
+        text += ("The requested comparison has been calculated in metrics.comparisons (rates use each row's own orders); "
+                 "describe it from those rows and never call it unavailable. ")
+    if plan.unsupported:
+        text += ("These requested items are not in the data; do not estimate them, mention them once in data_limitations: "
+                 + "; ".join(u.requested for u in plan.unsupported) + ". ")
+    return text
+
+
 class ReportService:
     def __init__(self, ai_service: DeepSeekService, config: Settings = settings) -> None:
         self._ai = ai_service
@@ -178,6 +245,147 @@ class ReportService:
             for d in list_report_definitions()
         ]
 
+    def _summarize_data_for_suggestions(
+        self,
+        report_type: str,
+        data: dict[str, Any],
+        definition: Any,
+    ) -> dict[str, Any] | None:
+        if not isinstance(data, dict):
+            return None
+
+        summary: dict[str, Any] = {}
+        try:
+            analysis = definition.analyze(data)
+            metrics = analysis.metrics or {}
+            summary["records_analyzed"] = analysis.records_analyzed
+
+            if "status_category_breakdown" in metrics and metrics["status_category_breakdown"]:
+                summary["status_counts"] = {k: v for k, v in metrics["status_category_breakdown"].items() if v}
+            elif "status_distribution" in metrics:
+                summary["status_counts"] = metrics["status_distribution"]
+            elif "status_breakdown" in metrics:
+                summary["status_counts"] = dict(list(metrics["status_breakdown"].items())[:6])
+
+            if "courier_performance" in metrics:
+                couriers = [
+                    c.get("courier") for c in metrics["courier_performance"]
+                    if isinstance(c, dict) and c.get("courier")
+                ]
+                if couriers:
+                    summary["available_couriers"] = couriers[:8]
+
+            if "top_destination_cities" in metrics:
+                cities = [c.get("city") for c in metrics["top_destination_cities"] if isinstance(c, dict) and c.get("city")]
+                if cities:
+                    summary["top_cities"] = cities[:6]
+
+            if "payment_mode_breakdown" in metrics and metrics["payment_mode_breakdown"]:
+                summary["payment_modes"] = metrics["payment_mode_breakdown"]
+
+            if "cancellation_reasons" in metrics:
+                reasons = [r.get("reason") for r in metrics["cancellation_reasons"] if isinstance(r, dict) and r.get("reason")]
+                if reasons:
+                    summary["cancellation_reasons"] = reasons[:5]
+
+            if "total_remitted_amount" in metrics:
+                summary["total_remitted_amount"] = metrics["total_remitted_amount"]
+            if "total_pending_amount" in metrics:
+                summary["total_pending_amount"] = metrics["total_pending_amount"]
+        except Exception:
+            pass
+
+        # Also incorporate high-level account metadata if available
+        if "account_summary" in data and isinstance(data["account_summary"], dict):
+            summary["account_totals"] = {k: v for k, v in data["account_summary"].items() if v}
+        if "report_filter" in data and isinstance(data["report_filter"], dict):
+            summary["active_filters"] = data["report_filter"]
+
+        # Raw fallback if analyze didn't produce anything
+        if not summary or summary.get("records_analyzed", 0) == 0:
+            orders = data.get("getOrderList") or data.get("orders") or data.get("paidRemittanceList") or data.get("pendingRemittanceList")
+            if isinstance(orders, dict):
+                orders = orders.get("data")
+            if isinstance(orders, list) and orders:
+                couriers = set()
+                statuses = Counter()
+                for o in orders[:50]:
+                    if isinstance(o, dict):
+                        courier = o.get("courier_name") or o.get("courier") or o.get("courierName")
+                        if courier:
+                            couriers.add(str(courier))
+                        status = o.get("status") or o.get("order_status") or o.get("orderStatus")
+                        if status:
+                            statuses[str(status)] += 1
+                summary["records_count"] = len(orders)
+                if couriers:
+                    summary["available_couriers"] = list(couriers)[:6]
+                if statuses:
+                    summary["status_counts"] = dict(statuses.most_common(5))
+
+        return summary if summary else None
+
+    async def _generate_data_tailored_suggestions(
+        self,
+        prompt: str,
+        report_type: str,
+        data: dict[str, Any],
+        definition: Any,
+        validation_reason: str,
+    ) -> list[str] | None:
+        """Use DeepSeek to generate smart, data-grounded prompt suggestions when the user's prompt is invalid."""
+        if not self._ai or not self._settings.deepseek_configured:
+            return None
+
+        summary = self._summarize_data_for_suggestions(report_type, data, definition)
+        if not summary:
+            return None
+
+        system_prompt = (
+            "You are an expert e-commerce and logistics analytics consultant. "
+            "A user attempted to generate a report but did not enter an appropriate or specific prompt. "
+            "Your task is to examine the provided dataset summary and generate 3 to 4 concise, diverse, "
+            "and highly practical analytical prompts in English that the user can ask to explore their data.\n"
+            "Guidelines:\n"
+            "1. Prompts must be analytical questions or instructions (e.g. comparing courier delivery performance, "
+            "breakdown of delivery statuses, RTO patterns, top destination cities, payment mode analysis, or charts).\n"
+            "2. Ground each prompt in the actual data: refer specifically to the couriers, status names, or numbers "
+            "present in the dataset summary when helpful.\n"
+            "3. Keep each suggested prompt to 1 or 2 concise, natural sentences.\n"
+            "4. Return strict JSON format with a single key 'suggested_prompts' containing a list of 3-4 strings.\n"
+            "Example format:\n"
+            '{"suggested_prompts": ["Analyse courier delivery performance and RTO rates across Delhivery and Ekart.", "Include a donut chart of delivery status breakdown and top destination cities.", "Compare COD vs prepaid delivery success rates."]}'
+        )
+
+        user_content = (
+            f"Report Type: {report_type}\n"
+            f"User's Entered Prompt: \"{prompt}\"\n"
+            f"Validation Issue: {validation_reason}\n"
+            f"Dataset Summary:\n{json.dumps(summary, indent=2)}\n\n"
+            "Generate 3 to 4 data-tailored analytical prompt suggestions in JSON format."
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
+
+        try:
+            response = await asyncio.wait_for(
+                self._ai.generate_json(messages, max_tokens=350),
+                timeout=8.0,
+            )
+            raw_suggestions = response.get("suggested_prompts")
+            if isinstance(raw_suggestions, list):
+                cleaned = [str(s).strip() for s in raw_suggestions if str(s).strip()]
+                if len(cleaned) >= 2:
+                    logger.info("DeepSeek generated %d data-tailored prompt suggestions.", len(cleaned))
+                    return cleaned[:4]
+        except Exception as exc:
+            logger.warning("Could not generate AI prompt suggestions via DeepSeek: %s", exc)
+
+        return None
+
     async def generate_report(self, request: ReportRequest) -> ReportResponse:
         definition = get_report_definition(request.report_type)
 
@@ -185,31 +393,79 @@ class ReportService:
         if request.prompt and request.prompt.strip():
             validation = self._prompt_skill.validate(request.prompt, report_type=request.report_type)
             if not validation.is_valid:
+                ai_suggestions = await self._generate_data_tailored_suggestions(
+                    prompt=request.prompt,
+                    report_type=request.report_type,
+                    data=request.data,
+                    definition=definition,
+                    validation_reason=validation.reason,
+                )
+                if ai_suggestions:
+                    validation.suggested_prompts = ai_suggestions
+
                 logger.info(
-                    "PromptSkill rejected invalid prompt: category=%s reason=%s prompt=%r",
+                    "PromptSkill rejected invalid prompt: category=%s reason=%s prompt=%r suggestions=%r",
                     validation.category,
                     validation.reason,
                     request.prompt[:60],
+                    validation.suggested_prompts,
                 )
                 raise InvalidPromptError(validation.message, details=validation.to_dict())
 
         # Validation + metric calculation (raises InvalidReportDataError on bad data).
         analysis = await run_in_threadpool(definition.analyze, request.data)
-        insights = None
-        if request.report_type == "shipment":
-            try:
-                insights = await run_in_threadpool(build_insights, request.data)
-            except Exception:  # never let the v3 block break the existing report
-                logger.exception("Shipment insights could not be built; continuing with the v2 report.")
         intent = detect_intent(request.prompt or definition.default_prompt) if request.report_type == "shipment" else None
-        if intent:
-            analysis = await run_in_threadpool(scope_analysis, analysis, request.data, intent)
         chart_adapter = get_adapter(definition.report_type)
         chart_plan = plan_charts(request.prompt or "", definition.report_type, chart_adapter)
+
+        # Prompt -> validated analysis plan -> the records it covers (this request's data only).
+        vocab = get_vocabulary(definition.report_type) if intent and chart_adapter else None
+        plan = scope = scoped_rows = keep = None
+        data = request.data
+        planner_calls = 0
+        if vocab:
+            plan, scope, scoped_rows, keep, planner_calls = await self._build_plan(request, vocab, chart_adapter, intent,
+                                                                                   chart_plan)
+            intent = _plan_intent(intent, plan, vocab)
+            if keep is not None and vocab.subset:
+                data = vocab.subset(request.data, keep)  # charts and insights see exactly the analysed records
+            if plan.date_range:  # the plan's period already scopes the rows; no second, data-anchored window
+                chart_plan.requests = [replace(r, window_days=None) for r in chart_plan.requests]
+
+        insights = None
+        if request.report_type == "shipment" and (keep is None or keep):
+            try:
+                insights = await run_in_threadpool(build_insights, data)
+            except Exception:  # never let the v3 block break the existing report
+                logger.exception("Shipment insights could not be built; continuing with the v2 report.")
+        if intent:
+            analysis = await run_in_threadpool(scope_analysis, analysis, request.data, intent, keep)
         if chart_plan.chart_only and intent:
             # Charts only: Python computes them and no narrative is needed, so DeepSeek is not called.
             intent = replace(intent, mode="graphs_only", tables=False, charts=True)
-        messages = build_messages(definition, analysis, request.prompt, intent)
+        # Plan tables (record lists, groupings, cross-tabs) are calculated before the AI call, so the
+        # narrative can describe the comparison that was asked for instead of calling it unavailable.
+        plan_tables, plan_notes = [], []
+        if plan is not None:
+            detail = next((t for t in plan.tables if t.kind == "detail"), None)
+            requested = set(detail.columns) - set(vocab.default_detail_columns) if detail else set()
+            plan_tables, plan_notes, missing = build_plan_tables(plan, scoped_rows, chart_adapter, vocab, requested)
+            plan = replace(plan, unsupported=plan.unsupported + tuple(missing))
+            if intent.mode == "graphs_only":
+                plan_tables = []
+            elif plan_tables and intent.mode == "table_only":
+                intent = replace(intent, tables=False)  # the table the user described replaces the standard one
+            comparisons = [{"title": t.title, "rows": [dict(zip([c.key for c in t.column_meta], v)) for v in t.values[:40]]}
+                           for t in plan_tables if (t.id or "").startswith("plan_grouped")]
+            if comparisons:
+                analysis.metrics["comparisons"] = comparisons  # AI context and numeric evidence
+            comparison_chart = _comparison_chart(plan, chart_plan, chart_adapter, request.prompt) if comparisons else None
+            if comparison_chart is not None:
+                chart_plan.requests = [r for r in chart_plan.requests if r.resolved and r.source == "rule"
+                                       and (r.dimension, r.series) != (comparison_chart.dimension, comparison_chart.series)]
+                chart_plan.requests.append(comparison_chart)
+        guidance = _plan_guidance(plan, scope, vocab, chart_adapter) if plan else ""
+        messages = build_messages(definition, analysis, request.prompt, intent, guidance)
         planning = chart_planning_instructions(chart_plan, chart_adapter) if chart_adapter else None
         if planning:  # ambiguous chart requests are planned inside the same single call
             messages[0]["content"] += "\n" + planning[0]
@@ -224,9 +480,15 @@ class ReportService:
         output_limit = self._settings.deepseek_max_output_tokens
         outcome = {}
         notice = None
-        if intent and (intent.deterministic or intent.status and not analysis.records_analyzed):
-            raw_content = deterministic_narrative(analysis, intent)
-            if chart_plan.chart_only:
+        # Python alone answers record lookups and empty scopes: no DeepSeek call.
+        python_only = plan is not None and (not plan.narrative or not analysis.records_analyzed)
+        if intent and (intent.deterministic or intent.status and not analysis.records_analyzed or python_only):
+            if plan is not None and (plan.scoped or (plan.lookup and not intent.deterministic)):
+                title = report_title(list(plan.filters), plan.date_range, chart_adapter, vocab)
+                raw_content = plan_narrative(analysis, plan, scope, chart_adapter, vocab, title)
+            else:
+                raw_content = deterministic_narrative(analysis, intent)
+            if chart_plan.chart_only and not (plan is not None and plan.scoped):
                 raw_content = {**raw_content, "title": "Shipment Charts",
                                "executive_summary": {"heading": "Overview", "paragraphs": [
                                    "Charts calculated directly from the supplied shipment records."]}}
@@ -256,9 +518,21 @@ class ReportService:
                     narrative_source = "ai_repaired"
                     notice = ("Some AI statements were removed because their numbers did not match your data. "
                               "All numbers shown are verified.")
+        claims_removed = 0
         chosen_tables = selected_tables(analysis, intent) if intent else {f"table_{i}": t for i, t in enumerate(analysis.tables)}
+        chosen_tables = {key: annotate_table(table) for key, table in chosen_tables.items()}
         if intent:
             raw_content = shape_narrative(raw_content, analysis, intent)
+        if plan is not None and narrative_source != "deterministic":
+            # e.g. "No cancellation reasons are available" when the records contain reasons.
+            raw_content, claims_removed = remove_false_absence_claims(raw_content, scoped_rows, vocab, vocab.absence_subjects)
+            summary = raw_content.get("executive_summary")
+            if isinstance(summary, dict) and not summary.get("paragraphs"):
+                fallback = plan_narrative(analysis, plan, scope, chart_adapter, vocab, raw_content.get("title") or "Report")
+                summary["paragraphs"] = fallback["executive_summary"]["paragraphs"]
+            if claims_removed and notice is None:
+                notice = ("Statements claiming that available data was missing were removed. "
+                          "All numbers shown are verified.")
 
         try:
             narrative = None
@@ -305,6 +579,13 @@ class ReportService:
                     for err in (exc.errors()[:20] if isinstance(exc, ValidationError) else [])
                 ],
             ) from exc
+        if plan_tables:
+            plan_sections = [DisplaySection(id=f"plan_table_{i + 1}", title=table.title, order=1,
+                                            blocks=[TableBlock(**table.model_dump())]) for i, table in enumerate(plan_tables)]
+            # A record lookup leads with the records; otherwise the requested tables follow the analysis.
+            display_sections = plan_sections + display_sections if plan.lookup else display_sections + plan_sections
+            for i, section in enumerate(display_sections):
+                section.order = i + 1
 
         if narrative_source in ("ai", "ai_repaired"):  # code-written narratives quote Python-calculated values only
             try:
@@ -341,13 +622,14 @@ class ReportService:
             prompt=request.prompt,
             records_analyzed=analysis.records_analyzed,
             key_metrics=analysis.key_metrics,
-            tables=list(chosen_tables.values()),
+            tables=((plan_tables + list(chosen_tables.values())) if plan is not None and plan.lookup
+                    else (list(chosen_tables.values()) + plan_tables))[:15],
             metrics=analysis.metrics,
             content=content,
             disclaimer=DEFAULT_DISCLAIMER,
             company_name=company,
             customer_id=customer_id,
-            generation={"ai_calls": 0 if narrative_source == "deterministic" else 1,
+            generation={"ai_calls": (0 if narrative_source == "deterministic" else 1) + planner_calls,
                         "narrative_source": narrative_source, "notice": notice},
         )
 
@@ -357,14 +639,24 @@ class ReportService:
             content.data_limitations = []
         else:
             limitations = list(dict.fromkeys(content.data_limitations if intent else content.data_limitations + analysis.metrics.get("data_quality_notes", [])))
+            if plan is not None:
+                # What could not be answered comes first, then what the figures cover, then how wording was read.
+                extra = [f"Not available: {u.requested}. {u.reason}" for u in plan.unsupported]
+                if scope and (plan.scoped or scope.get("is_partial")):
+                    extra.append(scope["statement"])
+                    # The statement gives the exact counts; the generic coverage note would repeat it.
+                    limitations = [l for l in limitations if not l.startswith("Results cover only the supplied records")]
+                extra += list(plan.notes) + plan_notes
+                limitations = list(dict.fromkeys(extra + limitations))[:30]
+                content.data_limitations = limitations[:15]
         cards = (display_metrics(analysis, intent) if intent else
                  [DisplayMetric(key=f"metric_{i}", label=m.label, value=m.value, unit="text")
                   for i, m in enumerate(analysis.key_metrics[:4])])
         chart_notes = []
         if chart_plan.requests:
-            built = await run_in_threadpool(build_charts, definition.report_type, request.data, chart_plan,
+            built = await run_in_threadpool(build_charts, definition.report_type, data, chart_plan,
                                             ai_requests=outcome.get("chart_requests"),
-                                            status_scope=intent.status if intent else None)
+                                            status_scope=intent.status if intent and keep is None else None)
             charts, chart_notes = built.charts, built.notes
             if not (intent and intent.omit_limitations):
                 limitations = list(dict.fromkeys(limitations + [f"{n.requested_type}: {n.reason}" for n in chart_notes]))
@@ -383,7 +675,7 @@ class ReportService:
             title=content.title, subtitle=report.report_name, generated_at=report.generated_at,
             executive_summary=summary, metrics=cards,
             sections=display_sections, findings=content.findings, recommendations=content.recommendations,
-            limitations=limitations, charts=charts, chart_notes=chart_notes, scope=analysis.metrics.get("scope", {}),
+            limitations=limitations, charts=charts, chart_notes=chart_notes, scope={**analysis.metrics.get("scope", {}), **(scope or {})},
             company_name=company, customer_id=customer_id)
         if insights:
             insights["meta"] = {"narrative_source": narrative_source, "fallback_used": narrative_source == "deterministic_fallback",
@@ -397,15 +689,81 @@ class ReportService:
                                                                   unit=c.get("unit", "text"), note=c.get("note"),
                                                                   tone=c.get("tone"), icon=c.get("icon"))
                                                     for c in cards]
+        if plan is not None:
+            self._verify(report, plan, scoped_rows, analysis, chart_adapter, vocab, narrative_source, claims_removed,
+                         [r.type for r in chart_plan.requests])
         if request.previous_report:
-            report = self._merge_with_previous_report(report, request.previous_report, request.prompt, intent=intent, chart_plan=chart_plan)
+            report = self._merge_with_previous_report(report, request.previous_report, request.prompt, intent=intent,
+                                                      chart_plan=chart_plan, customer_id=request.customer_id)
         return report
+
+    async def _build_plan(self, request, vocab, adapter, intent, chart_plan):
+        """(plan, scope, scoped rows, kept record indexes or None, planner AI calls) for this request only."""
+        rows = await run_in_threadpool(adapter.rows, request.data)
+        context = await run_in_threadpool(vocab.context, request.data)
+        plan = interpret(request.prompt or "", vocab=vocab, adapter=adapter, rows=rows, context=context, intent=intent,
+                         chart_requested=bool(chart_plan.requests))
+        calls = 0
+        if plan.ambiguous and self._settings.report_ai_planner:
+            calls = 1
+            try:
+                raw = await self._ai.generate_json(ai_plan_messages(request.prompt, vocab, adapter, rows, context),
+                                                   max_tokens=400)
+                plan = merge_ai_plan(plan, raw, vocab, adapter, rows)
+            except AppError as exc:  # the rule-based plan still stands; a report never fails on the optional plan
+                logger.warning("AI analysis plan unavailable (%s); using the rule-based plan.", exc.code)
+        if not plan.answerable:
+            reasons = [u.reason for u in plan.unsupported] or ["The request does not name anything the data contains."]
+            raise UnsupportedRequestError(
+                "This request cannot be answered from the supplied data. " + " ".join(dict.fromkeys(reasons)),
+                details={"unsupported": [{"requested": u.requested, "reason": u.reason, "missing": list(u.missing)}
+                                         for u in plan.unsupported],
+                         "available_fields": sorted({vocab.label(name, adapter) for name in adapter.fields
+                                                     if any(r.get(name) is not None for r in rows)})})
+        scoped, missing = matching_rows(rows, plan) if plan.scoped else (rows, Counter())
+        keep = {row["_index"] for row in scoped} if plan.scoped else None
+        scope = dataset_scope(context, plan, adapter, vocab, rows, scoped, missing)
+        return plan, scope, scoped, keep, calls
+
+    def _verify(self, report, plan, rows, analysis, adapter, vocab, narrative_source, claims_removed, chart_types):
+        """Recount every Python figure from the scoped rows; remove any that does not match."""
+        structured = report.structured_report
+        verification, charts, notes, tables, cards = verify_report(
+            rows=rows, analysis=analysis, plan=plan, adapter=adapter, vocab=vocab, charts=structured.charts,
+            tables=report.tables, cards=structured.metrics, narrative_source=narrative_source,
+            claims_removed=claims_removed)
+        structured.charts, structured.chart_notes = charts, structured.chart_notes + notes
+        if len(tables) != len(report.tables):
+            removed = {table.title for table in report.tables if all(table is not kept for kept in tables)}
+            report.tables = tables
+            for section in structured.sections:
+                section.blocks = [b for b in section.blocks if not (b.type == "table" and b.title in removed)]
+            structured.sections = [s for s in structured.sections if s.blocks]
+            structured.limitations.append("Some tables were removed because their values could not be verified "
+                                          "against the supplied data.")
+        if len(cards) != len(structured.metrics):
+            labels = {card.label for card in cards}
+            report.key_metrics = [m for m in report.key_metrics if m.label in labels]
+            structured.metrics = cards
+        structured.verification = verification
+        structured.plan = plan.to_dict(adapter, vocab, chart_types)
 
     def _merge_with_previous_report(self, report: ReportResponse, prev: dict[str, Any], prompt: str,
                                     intent: Any | None = None,
-                                    chart_plan: Any | None = None) -> ReportResponse:
+                                    chart_plan: Any | None = None, customer_id: str | None = None) -> ReportResponse:
+        prev_sr = prev.get("structured_report") if isinstance(prev.get("structured_report"), dict) else {}
+        # Never mix requests: previous content built from other records, or for another customer, is not merged.
+        prev_fp = (prev_sr.get("scope") or {}).get("data_fingerprint") if isinstance(prev_sr.get("scope"), dict) else None
+        current_fp = (report.structured_report.scope or {}).get("data_fingerprint") if report.structured_report else None
+        prev_customer = prev.get("customer_id") or prev_sr.get("customer_id")
+        if (prev_fp and current_fp and prev_fp != current_fp) or (
+                prev_customer and customer_id and str(prev_customer) != str(customer_id)):
+            logger.info("Previous report not merged: it was built from different data or for another customer.")
+            if report.generation is not None:
+                report.generation["notice"] = ("The previous report was built from different data, so its content was "
+                                               "not carried over. This report uses only the current data.")
+            return report
         try:
-            prev_sr = prev.get("structured_report") or {}
             prev_sections = prev_sr.get("sections") or []
 
             merged_sections = []

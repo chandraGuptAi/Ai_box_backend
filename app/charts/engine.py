@@ -48,6 +48,11 @@ def build_charts(report_type: str, data: dict[str, Any], plan: ChartPlan, *, ai_
                                           missing=[adapter.fields[m].label if m in adapter.fields else m for m in exc.missing]))
             continue
         chart.id = _unique_id(request, used_ids, adapter)
+        # The chart's own subset, so its values can be recomputed independently (see app/analysis/verify.py).
+        if request.filters:
+            chart.options = {**chart.options, "applied_filters": [list(f) for f in request.filters]}
+        if request.window_days:
+            chart.options = {**chart.options, "window_days": request.window_days}
         result.charts.append(chart)
     for request in requests[MAX_CHARTS:]:
         result.notes.append(ChartNote(requested_type=SKILLS[request.type].label,
