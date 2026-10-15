@@ -1,0 +1,38 @@
+[
+ {
+  "status": "Delivered",
+  "orders": 35
+ },
+ {
+  "status": "Cancelled",
+  "orders": 15
+ },
+ {
+  "status": "In transit",
+  "orders": 11
+ },
+ {
+  "status": "Pickup scheduled",
+  "orders": 1
+ },
+ {
+  "status": "Undelivered",
+  "orders": 1
+ },
+ {
+  "status": "RTO in transit",
+  "orders": 1
+ },
+ {
+  "status": "Out for delivery",
+  "orders": 0
+ },
+ {
+  "status": "RTO delivered",
+  "orders": 0
+ },
+ {
+  "status": "Lost",
+  "orders": 0
+ }
+]

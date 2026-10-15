@@ -1,0 +1,38 @@
+{
+  "report_type": "shipment",
+  "prompt": "Generate a Shipment Financial Analysis Report covering shipping charges, courier and payment-mode comparisons.",
+  "data": {
+    "getOrderList": [
+      {
+        "order_status": "Delivered",
+        "courier_name": "A",
+        "payment_type": "COD",
+        "totalCharge": "0.10",
+        "collectableAmount": 99999
+      },
+      {
+        "order_status": "In Transit",
+        "courier_name": "A",
+        "payment_type": "ToPay",
+        "totalCharge": "0.20",
+        "invoice_amount": 88888
+      },
+      {
+        "order_status": "Cancelled",
+        "courier_name": "B",
+        "payment_type": "Prepaid",
+        "totalCharge": "10.00"
+      },
+      {
+        "order_status": "Pending",
+        "courier_name": "B",
+        "totalCharge": null
+      },
+      {
+        "order_status": "Pending",
+        "courier_name": "B",
+        "totalCharge": "not money"
+      }
+    ]
+  }
+}

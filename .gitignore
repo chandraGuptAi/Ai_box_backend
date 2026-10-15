@@ -1,0 +1,44 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+backups/
+*.bak
+*.backup
+*.dump
+*.sql
+*.tar
+*.tar.gz
+*.zip
+*.log
+*.db
+*.sqlite*
+scratch/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+node_modules/
+virtualenv/
+*.tmp
+*.swp
+
+# Generated reports
+output/*
+!output/.gitkeep
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

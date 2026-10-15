@@ -1,0 +1,72 @@
+{
+  "method": "UTF-8 bytes / 4, rounded up: token proxy, not DeepSeek billing tokens",
+  "input": "samples/shipment_request.json",
+  "cases": {
+    "dashboard": {
+      "prompt": "Create a shipment insight report in dashboard format for delivered shipments. Keep it short and add graphs.",
+      "before_bytes": 26523,
+      "before_estimated_tokens": 6631,
+      "after_bytes": 4974,
+      "after_estimated_tokens": 1244,
+      "estimated_reduction_percent": 81.2
+    },
+    "summary": {
+      "prompt": "Give a short shipment summary.",
+      "before_bytes": 26446,
+      "before_estimated_tokens": 6612,
+      "after_bytes": 4997,
+      "after_estimated_tokens": 1250,
+      "estimated_reduction_percent": 81.1
+    },
+    "financial": {
+      "prompt": "Generate a Shipment Financial Analysis Report. Compare courier shipping charges and COD, Prepaid and ToPay. Include tables, graphs, findings and recommendations.",
+      "before_bytes": 26577,
+      "before_estimated_tokens": 6645,
+      "after_bytes": 6023,
+      "after_estimated_tokens": 1506,
+      "estimated_reduction_percent": 77.3
+    },
+    "detailed": {
+      "prompt": "Create a detailed shipment report covering status, courier performance, cancellations and payment modes with tables and charts.",
+      "before_bytes": 26543,
+      "before_estimated_tokens": 6636,
+      "after_bytes": 6766,
+      "after_estimated_tokens": 1692,
+      "estimated_reduction_percent": 74.5
+    },
+    "table_only": {
+      "prompt": "Show only a courier comparison table.",
+      "before_bytes": 26453,
+      "before_estimated_tokens": 6614,
+      "after_bytes": 0,
+      "after_estimated_tokens": 0,
+      "estimated_reduction_percent": 100.0
+    },
+    "graphs_only": {
+      "prompt": "Show only graphs of shipment status.",
+      "before_bytes": 26452,
+      "before_estimated_tokens": 6613,
+      "after_bytes": 0,
+      "after_estimated_tokens": 0,
+      "estimated_reduction_percent": 100.0
+    }
+  },
+  "input_sha256": "dd6a673d0aa1df6cebc7e0ea645d9bda6929b2f7c0cddbc04ffe2b264c7ef837",
+  "live_dashboard": {
+    "measured_at": "2026-10-13T10:07:47.120025+00:00",
+    "model": "deepseek-chat",
+    "scope": "one synthetic dashboard request, same source records and user prompt; all attempts included",
+    "before": {
+      "status": "valid_json",
+      "calls": 1,
+      "prompt_tokens": 7459,
+      "completion_tokens": 2338
+    },
+    "after": {
+      "status": "valid_json",
+      "calls": 1,
+      "prompt_tokens": 1275,
+      "completion_tokens": 443
+    }
+  }
+}

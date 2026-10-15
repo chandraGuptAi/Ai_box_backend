@@ -1,0 +1,197 @@
+{
+  "as_of": "2026-10-13",
+  "kpis": {
+    "in_transit": 11,
+    "all_orders": 64,
+    "share_of_all": 0.1719,
+    "flagged": 11,
+    "delivered_but_open": 6,
+    "cancel_noted": 3,
+    "median_age": 55,
+    "spend": 12304.4,
+    "avg_charge": 1118.58,
+    "median_charge": 508.94,
+    "goods_value": 617802.0
+  },
+  "issues": {
+    "delivered_date_but_open": 6,
+    "courier_remark_delivered": 11,
+    "cancel_note_on_active": 3,
+    "open_over_30_days": 10,
+    "pickup_before_order": 11,
+    "charge_outlier": [
+      "252742834"
+    ],
+    "test_orders": 10
+  },
+  "couriers": [
+    {
+      "courier": "LTL Ekart",
+      "orders": 7,
+      "weight_kg": 90.0,
+      "charges": 3562.58,
+      "avg_charge": 508.94,
+      "charge_per_kg": 39.58
+    },
+    {
+      "courier": "LTL Delhivery",
+      "orders": 2,
+      "weight_kg": 34.0,
+      "charges": 7339.94,
+      "avg_charge": 3669.97,
+      "charge_per_kg": 215.88
+    },
+    {
+      "courier": "LTL TCI Express",
+      "orders": 2,
+      "weight_kg": 30.0,
+      "charges": 1401.88,
+      "avg_charge": 700.94,
+      "charge_per_kg": 46.73
+    }
+  ],
+  "account_status_mix": [
+    {
+      "status": "Delivered",
+      "orders": 35,
+      "share": 0.5469
+    },
+    {
+      "status": "Cancelled",
+      "orders": 15,
+      "share": 0.2344
+    },
+    {
+      "status": "In transit",
+      "orders": 11,
+      "share": 0.1719
+    },
+    {
+      "status": "Pickup scheduled",
+      "orders": 1,
+      "share": 0.0156
+    },
+    {
+      "status": "Undelivered",
+      "orders": 1,
+      "share": 0.0156
+    },
+    {
+      "status": "RTO in transit",
+      "orders": 1,
+      "share": 0.0156
+    }
+  ],
+  "order_checks": [
+    {
+      "order_id": "563583354",
+      "age_days": 13,
+      "delivered_date": false,
+      "cancel_note": true,
+      "pickup_before_order": true,
+      "charge_outlier": false,
+      "over_30_days": false,
+      "flags": 2
+    },
+    {
+      "order_id": "775501628",
+      "age_days": 48,
+      "delivered_date": false,
+      "cancel_note": false,
+      "pickup_before_order": true,
+      "charge_outlier": false,
+      "over_30_days": true,
+      "flags": 2
+    },
+    {
+      "order_id": "505339947",
+      "age_days": 55,
+      "delivered_date": true,
+      "cancel_note": false,
+      "pickup_before_order": true,
+      "charge_outlier": false,
+      "over_30_days": true,
+      "flags": 3
+    },
+    {
+      "order_id": "703900968",
+      "age_days": 55,
+      "delivered_date": true,
+      "cancel_note": false,
+      "pickup_before_order": true,
+      "charge_outlier": false,
+      "over_30_days": true,
+      "flags": 3
+    },
+    {
+      "order_id": "992623758",
+      "age_days": 55,
+      "delivered_date": true,
+      "cancel_note": false,
+      "pickup_before_order": true,
+      "charge_outlier": false,
+      "over_30_days": true,
+      "flags": 3
+    },
+    {
+      "order_id": "278985393",
+      "age_days": 55,
+      "delivered_date": false,
+      "cancel_note": false,
+      "pickup_before_order": true,
+      "charge_outlier": false,
+      "over_30_days": true,
+      "flags": 2
+    },
+    {
+      "order_id": "697247772",
+      "age_days": 56,
+      "delivered_date": true,
+      "cancel_note": false,
+      "pickup_before_order": true,
+      "charge_outlier": false,
+      "over_30_days": true,
+      "flags": 3
+    },
+    {
+      "order_id": "462986196",
+      "age_days": 56,
+      "delivered_date": true,
+      "cancel_note": false,
+      "pickup_before_order": true,
+      "charge_outlier": false,
+      "over_30_days": true,
+      "flags": 3
+    },
+    {
+      "order_id": "262133952",
+      "age_days": 57,
+      "delivered_date": true,
+      "cancel_note": false,
+      "pickup_before_order": true,
+      "charge_outlier": false,
+      "over_30_days": true,
+      "flags": 3
+    },
+    {
+      "order_id": "594205586",
+      "age_days": 57,
+      "delivered_date": false,
+      "cancel_note": true,
+      "pickup_before_order": true,
+      "charge_outlier": false,
+      "over_30_days": true,
+      "flags": 3
+    },
+    {
+      "order_id": "252742834",
+      "age_days": 57,
+      "delivered_date": false,
+      "cancel_note": true,
+      "pickup_before_order": true,
+      "charge_outlier": true,
+      "over_30_days": true,
+      "flags": 4
+    }
+  ]
+}

@@ -1,0 +1,665 @@
+{
+  "report_type": "shipment",
+  "report_name": "Shipment Analysis Report",
+  "generated_at": "2026-10-13T05:26:52.020777Z",
+  "prompt": "Analyze shipment status and cancellation reasons. Compare courier performance and highlight RTO risk.",
+  "records_analyzed": 12,
+  "key_metrics": [
+    {
+      "label": "Total Orders",
+      "value": "12",
+      "note": null
+    },
+    {
+      "label": "Delivered",
+      "value": "3 (25.0%)",
+      "note": null
+    },
+    {
+      "label": "In Transit",
+      "value": "2 (16.7%)",
+      "note": null
+    },
+    {
+      "label": "Pending / Not Shipped",
+      "value": "1 (8.3%)",
+      "note": null
+    },
+    {
+      "label": "Cancelled",
+      "value": "4 (33.3%)",
+      "note": null
+    },
+    {
+      "label": "RTO / Returned",
+      "value": "1 (8.3%)",
+      "note": null
+    },
+    {
+      "label": "Delivery Exception (NDR)",
+      "value": "1 (8.3%)",
+      "note": null
+    },
+    {
+      "label": "Courier Partners",
+      "value": "4",
+      "note": null
+    },
+    {
+      "label": "Top Cancellation Reason",
+      "value": "Customer not available",
+      "note": "2 of 4 cancellations with a reason"
+    },
+    {
+      "label": "COD Orders",
+      "value": "7 (58.3%)",
+      "note": null
+    },
+    {
+      "label": "Total Order Value",
+      "value": "22,638.00",
+      "note": "Across 12 orders; currency as provided in source data"
+    },
+    {
+      "label": "Order Date Range",
+      "value": "02 Jan 2025 – 07 Jan 2025",
+      "note": null
+    }
+  ],
+  "tables": [
+    {
+      "title": "Shipment Status Summary",
+      "columns": [
+        "Status Category",
+        "Orders",
+        "Share (%)"
+      ],
+      "rows": [
+        [
+          "Delivered",
+          "3",
+          "25.0"
+        ],
+        [
+          "In Transit",
+          "2",
+          "16.7"
+        ],
+        [
+          "Pending / Not Shipped",
+          "1",
+          "8.3"
+        ],
+        [
+          "Cancelled",
+          "4",
+          "33.3"
+        ],
+        [
+          "RTO / Returned",
+          "1",
+          "8.3"
+        ],
+        [
+          "Delivery Exception (NDR)",
+          "1",
+          "8.3"
+        ]
+      ]
+    },
+    {
+      "title": "Courier Performance",
+      "columns": [
+        "Courier",
+        "Orders",
+        "Delivered",
+        "Cancelled",
+        "RTO",
+        "Delivery Rate (%)"
+      ],
+      "rows": [
+        [
+          "Delhivery",
+          "5",
+          "1",
+          "1",
+          "0",
+          "20.0"
+        ],
+        [
+          "Xpressbees",
+          "3",
+          "0",
+          "2",
+          "1",
+          "0.0"
+        ],
+        [
+          "Blue Dart",
+          "2",
+          "1",
+          "0",
+          "0",
+          "50.0"
+        ],
+        [
+          "Ekart",
+          "2",
+          "1",
+          "1",
+          "0",
+          "50.0"
+        ]
+      ]
+    },
+    {
+      "title": "Top Cancellation Reasons",
+      "columns": [
+        "Reason",
+        "Orders",
+        "Share of Cancellations with Reason (%)"
+      ],
+      "rows": [
+        [
+          "Customer not available",
+          "2",
+          "50.0"
+        ],
+        [
+          "Customer refused - call [redacted]",
+          "1",
+          "25.0"
+        ],
+        [
+          "Incorrect address",
+          "1",
+          "25.0"
+        ]
+      ]
+    },
+    {
+      "title": "Payment Mode",
+      "columns": [
+        "Payment Mode",
+        "Orders",
+        "Share (%)"
+      ],
+      "rows": [
+        [
+          "COD",
+          "7",
+          "58.3"
+        ],
+        [
+          "Prepaid",
+          "5",
+          "41.7"
+        ]
+      ]
+    },
+    {
+      "title": "Top Destination States",
+      "columns": [
+        "State",
+        "Orders",
+        "Share (%)"
+      ],
+      "rows": [
+        [
+          "Maharashtra",
+          "3",
+          "25.0"
+        ],
+        [
+          "Gujarat",
+          "2",
+          "16.7"
+        ],
+        [
+          "Uttar Pradesh",
+          "1",
+          "8.3"
+        ],
+        [
+          "Tamil Nadu",
+          "1",
+          "8.3"
+        ],
+        [
+          "Rajasthan",
+          "1",
+          "8.3"
+        ],
+        [
+          "Delhi",
+          "1",
+          "8.3"
+        ],
+        [
+          "Karnataka",
+          "1",
+          "8.3"
+        ],
+        [
+          "Kerala",
+          "1",
+          "8.3"
+        ],
+        [
+          "West Bengal",
+          "1",
+          "8.3"
+        ]
+      ]
+    }
+  ],
+  "content": {
+    "title": "Shipment Analysis Report: 02–07 January 2025",
+    "executive_summary": "This report analyses 12 orders placed between 02 Jan 2025 and 07 Jan 2025. Only 3 orders (25.0%) were delivered, while 4 orders (33.3%) were cancelled, making cancellation the single largest status category. A further 1 order (8.3%) went to RTO and 1 order (8.3%) recorded a delivery exception. COD accounts for 7 of 12 orders (58.3%). Given the small dataset, these figures indicate patterns to monitor rather than firm conclusions.",
+    "sections": [
+      {
+        "heading": "Shipment Status Overview",
+        "content": "Of the 12 orders, 3 (25.0%) were delivered, 2 (16.7%) are in transit and 1 (8.3%) is pending pickup. The remaining 6 orders (50.0%) ended in a negative outcome: 4 cancelled (33.3%), 1 RTO (8.3%) and 1 delivery exception (8.3%)."
+      },
+      {
+        "heading": "Cancellation Analysis",
+        "content": "All 4 cancelled orders have a recorded reason. \"Customer not available\" is the most frequent reason with 2 cancellations (50.0%). \"Customer refused\" and \"Incorrect address\" account for 1 cancellation each (25.0% each)."
+      },
+      {
+        "heading": "Courier Performance",
+        "content": "Delhivery handled the most orders (5) with a delivery rate of 20.0%. Xpressbees handled 3 orders with no deliveries (0.0%), 2 cancellations and 1 RTO. Blue Dart and Ekart each handled 2 orders with a 50.0% delivery rate.\n\nCourier volumes are too small (2–5 orders each) to rank partners reliably."
+      },
+      {
+        "heading": "Payment Mode",
+        "content": "COD orders make up 58.3% (7 orders) and prepaid orders 41.7% (5 orders)."
+      }
+    ],
+    "findings": [
+      {
+        "title": "Cancellations exceed deliveries",
+        "detail": "4 orders (33.3%) were cancelled versus 3 delivered (25.0%).",
+        "severity": "high"
+      },
+      {
+        "title": "Customer unavailability is the leading cancellation reason",
+        "detail": "\"Customer not available\" accounts for 2 of 4 cancellations with a reason (50.0%).",
+        "severity": "medium"
+      },
+      {
+        "title": "Xpressbees recorded no deliveries",
+        "detail": "Of 3 Xpressbees orders, 0 were delivered, 2 cancelled and 1 went to RTO; the sample is very small.",
+        "severity": "medium"
+      },
+      {
+        "title": "COD is the dominant payment mode",
+        "detail": "7 of 12 orders (58.3%) are COD.",
+        "severity": "info"
+      }
+    ],
+    "recommendations": [
+      {
+        "action": "Introduce pre-dispatch customer confirmation for COD orders",
+        "rationale": "Addresses the leading cancellation reason, customer unavailability (50.0% of cancellations with a reason).",
+        "priority": "high"
+      },
+      {
+        "action": "Validate delivery addresses at order creation",
+        "rationale": "1 cancellation was attributed to an incorrect address.",
+        "priority": "medium"
+      },
+      {
+        "action": "Review Xpressbees allocation once more volume is available",
+        "rationale": "0.0% delivery rate on 3 orders warrants monitoring, but the sample is too small for a decision.",
+        "priority": "medium"
+      }
+    ],
+    "data_limitations": [
+      "The dataset is small (12 orders); percentages may not be representative.",
+      "2 orders are in transit and 1 is pending, so final delivery outcomes are not yet known.",
+      "No delivery timestamps are available, so delivery speed (TAT) cannot be assessed."
+    ]
+  },
+  "disclaimer": "This report was generated with AI assistance from the data supplied at generation time. Figures in the metrics and tables were calculated directly from that data; narrative interpretation should be reviewed before it is used for business decisions.",
+  "report_id": "d263f868b6114d599884e5325d7576db",
+  "ai_model": "deepseek-chat",
+  "metrics": {
+    "total_orders": 12,
+    "status_category_breakdown": [
+      {
+        "category": "delivered",
+        "label": "Delivered",
+        "count": 3,
+        "percent": 25.0
+      },
+      {
+        "category": "in_transit",
+        "label": "In Transit",
+        "count": 2,
+        "percent": 16.7
+      },
+      {
+        "category": "pending",
+        "label": "Pending / Not Shipped",
+        "count": 1,
+        "percent": 8.3
+      },
+      {
+        "category": "cancelled",
+        "label": "Cancelled",
+        "count": 4,
+        "percent": 33.3
+      },
+      {
+        "category": "rto",
+        "label": "RTO / Returned",
+        "count": 1,
+        "percent": 8.3
+      },
+      {
+        "category": "exception",
+        "label": "Delivery Exception (NDR)",
+        "count": 1,
+        "percent": 8.3
+      }
+    ],
+    "rates": {
+      "delivered_percent": 25.0,
+      "in_transit_percent": 16.7,
+      "pending_percent": 8.3,
+      "cancelled_percent": 33.3,
+      "rto_percent": 8.3,
+      "exception_percent": 8.3
+    },
+    "status_breakdown": [
+      {
+        "status": "Cancelled",
+        "count": 4,
+        "percent": 33.3
+      },
+      {
+        "status": "Delivered",
+        "count": 3,
+        "percent": 25.0
+      },
+      {
+        "status": "In Transit",
+        "count": 1,
+        "percent": 8.3
+      },
+      {
+        "status": "RTO Delivered",
+        "count": 1,
+        "percent": 8.3
+      },
+      {
+        "status": "Undelivered",
+        "count": 1,
+        "percent": 8.3
+      },
+      {
+        "status": "Out For Delivery",
+        "count": 1,
+        "percent": 8.3
+      },
+      {
+        "status": "Pickup Pending",
+        "count": 1,
+        "percent": 8.3
+      }
+    ],
+    "cancellation_reasons": {
+      "cancelled_orders": 4,
+      "cancelled_orders_with_reason": 4,
+      "top_reasons": [
+        {
+          "reason": "Customer not available",
+          "count": 2,
+          "percent": 50.0
+        },
+        {
+          "reason": "Customer refused - call [redacted]",
+          "count": 1,
+          "percent": 25.0
+        },
+        {
+          "reason": "Incorrect address",
+          "count": 1,
+          "percent": 25.0
+        }
+      ]
+    },
+    "courier_performance": [
+      {
+        "courier": "Delhivery",
+        "total_orders": 5,
+        "share_percent": 41.7,
+        "delivered": 1,
+        "in_transit": 1,
+        "pending": 1,
+        "cancelled": 1,
+        "rto": 0,
+        "exception": 1,
+        "delivery_rate_percent": 20.0,
+        "cancellation_rate_percent": 20.0,
+        "rto_rate_percent": 0.0
+      },
+      {
+        "courier": "Xpressbees",
+        "total_orders": 3,
+        "share_percent": 25.0,
+        "delivered": 0,
+        "in_transit": 0,
+        "pending": 0,
+        "cancelled": 2,
+        "rto": 1,
+        "exception": 0,
+        "delivery_rate_percent": 0.0,
+        "cancellation_rate_percent": 66.7,
+        "rto_rate_percent": 33.3
+      },
+      {
+        "courier": "Blue Dart",
+        "total_orders": 2,
+        "share_percent": 16.7,
+        "delivered": 1,
+        "in_transit": 1,
+        "pending": 0,
+        "cancelled": 0,
+        "rto": 0,
+        "exception": 0,
+        "delivery_rate_percent": 50.0,
+        "cancellation_rate_percent": 0.0,
+        "rto_rate_percent": 0.0
+      },
+      {
+        "courier": "Ekart",
+        "total_orders": 2,
+        "share_percent": 16.7,
+        "delivered": 1,
+        "in_transit": 0,
+        "pending": 0,
+        "cancelled": 1,
+        "rto": 0,
+        "exception": 0,
+        "delivery_rate_percent": 50.0,
+        "cancellation_rate_percent": 50.0,
+        "rto_rate_percent": 0.0
+      }
+    ],
+    "distinct_couriers": 4,
+    "payment_mode_breakdown": [
+      {
+        "payment_mode": "COD",
+        "count": 7,
+        "percent": 58.3
+      },
+      {
+        "payment_mode": "Prepaid",
+        "count": 5,
+        "percent": 41.7
+      }
+    ],
+    "top_destination_states": [
+      {
+        "state": "Maharashtra",
+        "count": 3,
+        "percent": 25.0
+      },
+      {
+        "state": "Gujarat",
+        "count": 2,
+        "percent": 16.7
+      },
+      {
+        "state": "Uttar Pradesh",
+        "count": 1,
+        "percent": 8.3
+      },
+      {
+        "state": "Tamil Nadu",
+        "count": 1,
+        "percent": 8.3
+      },
+      {
+        "state": "Rajasthan",
+        "count": 1,
+        "percent": 8.3
+      },
+      {
+        "state": "Delhi",
+        "count": 1,
+        "percent": 8.3
+      },
+      {
+        "state": "Karnataka",
+        "count": 1,
+        "percent": 8.3
+      },
+      {
+        "state": "Kerala",
+        "count": 1,
+        "percent": 8.3
+      },
+      {
+        "state": "West Bengal",
+        "count": 1,
+        "percent": 8.3
+      }
+    ],
+    "top_destination_cities": [
+      {
+        "city": "Mumbai",
+        "count": 2,
+        "percent": 16.7
+      },
+      {
+        "city": "Ahmedabad",
+        "count": 2,
+        "percent": 16.7
+      },
+      {
+        "city": "Noida",
+        "count": 1,
+        "percent": 8.3
+      },
+      {
+        "city": "Chennai",
+        "count": 1,
+        "percent": 8.3
+      },
+      {
+        "city": "Jaipur",
+        "count": 1,
+        "percent": 8.3
+      },
+      {
+        "city": "New Delhi",
+        "count": 1,
+        "percent": 8.3
+      },
+      {
+        "city": "Bengaluru",
+        "count": 1,
+        "percent": 8.3
+      },
+      {
+        "city": "Kochi",
+        "count": 1,
+        "percent": 8.3
+      },
+      {
+        "city": "Pune",
+        "count": 1,
+        "percent": 8.3
+      },
+      {
+        "city": "Kolkata",
+        "count": 1,
+        "percent": 8.3
+      }
+    ],
+    "zone_breakdown": [],
+    "order_date_range": {
+      "from": "2025-01-02",
+      "to": "2025-01-07",
+      "orders_with_valid_date": 12
+    },
+    "order_value": {
+      "orders_with_value": 12,
+      "total": 22638.0,
+      "average": 1886.5,
+      "min": 749.0,
+      "max": 4299.0
+    },
+    "weight": {
+      "orders_with_weight": 12,
+      "average": 0.733,
+      "unit_note": "Unit as provided in the source data."
+    },
+    "field_coverage": {
+      "status": {
+        "present": 12,
+        "percent": 100.0
+      },
+      "courier": {
+        "present": 12,
+        "percent": 100.0
+      },
+      "payment_mode": {
+        "present": 12,
+        "percent": 100.0
+      },
+      "cancellation_reason": {
+        "present": 4,
+        "percent": 33.3
+      },
+      "destination_state": {
+        "present": 12,
+        "percent": 100.0
+      },
+      "destination_city": {
+        "present": 12,
+        "percent": 100.0
+      },
+      "zone": {
+        "present": 0,
+        "percent": 0.0
+      },
+      "order_date": {
+        "present": 12,
+        "percent": 100.0
+      },
+      "order_value": {
+        "present": 12,
+        "percent": 100.0
+      },
+      "weight": {
+        "present": 12,
+        "percent": 100.0
+      }
+    },
+    "data_quality_notes": [
+      "The dataset is small (12 orders); percentages may not be representative."
+    ]
+  }
+}

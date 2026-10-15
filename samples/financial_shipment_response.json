@@ -1,0 +1,740 @@
+{
+  "report_type": "shipment",
+  "report_name": "Shipment Analysis Report",
+  "generated_at": "2026-10-13T09:02:52.185410Z",
+  "prompt": "Generate a Shipment Financial Analysis Report covering shipping charges, courier and payment-mode comparisons.",
+  "records_analyzed": 5,
+  "key_metrics": [
+    {
+      "label": "Total Orders",
+      "value": "5",
+      "note": null
+    },
+    {
+      "label": "Delivered",
+      "value": "1 (20.0%)",
+      "note": null
+    },
+    {
+      "label": "In Transit",
+      "value": "1 (20.0%)",
+      "note": null
+    },
+    {
+      "label": "Pending / Not Shipped",
+      "value": "2 (40.0%)",
+      "note": null
+    },
+    {
+      "label": "Cancelled",
+      "value": "1 (20.0%)",
+      "note": null
+    },
+    {
+      "label": "RTO / Returned",
+      "value": "0 (0.0%)",
+      "note": null
+    },
+    {
+      "label": "Courier Partners",
+      "value": "2",
+      "note": null
+    },
+    {
+      "label": "COD Orders",
+      "value": "1 (20.0%)",
+      "note": null
+    },
+    {
+      "label": "Total Order Value",
+      "value": "88,888.00",
+      "note": "Across 1 orders; currency as provided in source data"
+    }
+  ],
+  "tables": [
+    {
+      "title": "Shipment Status Summary",
+      "columns": [
+        "Status Category",
+        "Orders",
+        "Share (%)"
+      ],
+      "rows": [
+        [
+          "Delivered",
+          "1",
+          "20.0"
+        ],
+        [
+          "In Transit",
+          "1",
+          "20.0"
+        ],
+        [
+          "Pending / Not Shipped",
+          "2",
+          "40.0"
+        ],
+        [
+          "Cancelled",
+          "1",
+          "20.0"
+        ]
+      ]
+    },
+    {
+      "title": "Courier Performance",
+      "columns": [
+        "Courier",
+        "Orders",
+        "Delivered",
+        "Cancelled",
+        "RTO",
+        "Delivery Rate (%)"
+      ],
+      "rows": [
+        [
+          "B",
+          "3",
+          "0",
+          "1",
+          "0",
+          "0.0"
+        ],
+        [
+          "A",
+          "2",
+          "1",
+          "0",
+          "0",
+          "50.0"
+        ]
+      ]
+    },
+    {
+      "title": "Payment Mode",
+      "columns": [
+        "Payment Mode",
+        "Orders",
+        "Share (%)"
+      ],
+      "rows": [
+        [
+          "COD",
+          "1",
+          "20.0"
+        ],
+        [
+          "ToPay",
+          "1",
+          "20.0"
+        ],
+        [
+          "Prepaid",
+          "1",
+          "20.0"
+        ]
+      ]
+    },
+    {
+      "title": "Shipping Charges by Courier",
+      "columns": [
+        "Courier",
+        "Orders",
+        "Valid Charges",
+        "Shipping Charges",
+        "Average Charge"
+      ],
+      "rows": [
+        [
+          "A",
+          "2",
+          "2",
+          "0.30",
+          "0.15"
+        ],
+        [
+          "B",
+          "3",
+          "1",
+          "10.00",
+          "10.00"
+        ]
+      ]
+    },
+    {
+      "title": "Shipping Charges by Payment Mode",
+      "columns": [
+        "Payment Mode",
+        "Orders",
+        "Valid Charges",
+        "Shipping Charges",
+        "Average Charge"
+      ],
+      "rows": [
+        [
+          "COD",
+          "1",
+          "1",
+          "0.10",
+          "0.10"
+        ],
+        [
+          "Not specified",
+          "2",
+          "0",
+          "Unavailable",
+          "Unavailable"
+        ],
+        [
+          "Prepaid",
+          "1",
+          "1",
+          "10.00",
+          "10.00"
+        ],
+        [
+          "ToPay",
+          "1",
+          "1",
+          "0.20",
+          "0.20"
+        ]
+      ]
+    }
+  ],
+  "content": {
+    "title": "Shipment Financial Analysis",
+    "executive_summary": "Total shipping charges are 10.30. Cancelled-order charges are 10.00; they are not proven losses.",
+    "sections": [],
+    "findings": [],
+    "recommendations": [],
+    "data_limitations": [
+      "Missing charges are excluded from averages; currency is unspecified."
+    ]
+  },
+  "structured_report": {
+    "schema_version": "2.0",
+    "report_id": "576c2adc25204d2fa5d693d2ce624829",
+    "report_type": "shipment",
+    "title": "Shipment Financial Analysis",
+    "subtitle": "Shipment Analysis Report",
+    "generated_at": "2026-10-13T09:02:52.185410Z",
+    "executive_summary": {
+      "heading": "Executive Summary",
+      "paragraphs": [
+        "Total shipping charges are 10.30. Cancelled-order charges are 10.00; they are not proven losses."
+      ],
+      "highlights": []
+    },
+    "metrics": [
+      {
+        "key": "total_shipping_charges",
+        "label": "Total Shipping Charges",
+        "value": "10.30",
+        "unit": "text",
+        "priority": "primary"
+      },
+      {
+        "key": "average_charge_per_order",
+        "label": "Average Charge per Order",
+        "value": "3.43",
+        "unit": "text",
+        "priority": "primary"
+      },
+      {
+        "key": "cancelled_shipping_charges",
+        "label": "Charges Associated with Cancelled Orders",
+        "value": "10.00",
+        "unit": "text",
+        "priority": "primary"
+      },
+      {
+        "key": "total_orders",
+        "label": "Orders Analyzed",
+        "value": 5,
+        "unit": "number",
+        "priority": "primary"
+      }
+    ],
+    "sections": [
+      {
+        "id": "shipping_charges",
+        "title": "Shipping Charges",
+        "order": 1,
+        "blocks": [
+          {
+            "title": "Shipping Charges by Courier",
+            "columns": [
+              "Courier",
+              "Orders",
+              "Valid Charges",
+              "Shipping Charges",
+              "Average Charge"
+            ],
+            "rows": [
+              [
+                "A",
+                "2",
+                "2",
+                "0.30",
+                "0.15"
+              ],
+              [
+                "B",
+                "3",
+                "1",
+                "10.00",
+                "10.00"
+              ]
+            ],
+            "type": "table"
+          }
+        ]
+      }
+    ],
+    "findings": [],
+    "recommendations": [],
+    "limitations": [
+      "Missing charges are excluded from averages; currency is unspecified.",
+      "Payment mode is missing for 2 of 5 orders.",
+      "No destination state field was found in the data.",
+      "No order date field was found in the data.",
+      "Order value is missing for 4 of 5 orders.",
+      "1 of 1 cancelled orders have no cancellation reason recorded.",
+      "The dataset is small (5 orders); percentages may not be representative.",
+      "Raw status tables show up to 15 labels; reasons, payment modes and destinations show up to 10 groups; courier tables and charts show up to 200 couriers. Omitted groups are not zero.",
+      "Shipping charges use only valid totalCharge values. Missing or invalid values are excluded, not zero. Averages use orders with valid charges. Invoice value and collectableAmount are separate measures. Charges on cancelled orders are not verified losses or revenue. Financial tables show at most 200 groups.",
+      "All rates describe supplied records only; external summary counters are not combined. Full dataset coverage is not assumed."
+    ],
+    "charts": [],
+    "scope": {
+      "kind": "supplied_records",
+      "records_analyzed": 5,
+      "reported_total": null,
+      "denominator": "supplied_records"
+    }
+  },
+  "disclaimer": "This report was generated with AI assistance from the data supplied at generation time. Figures in the metrics and tables were calculated directly from that data; narrative interpretation should be reviewed before it is used for business decisions.",
+  "report_id": "576c2adc25204d2fa5d693d2ce624829",
+  "ai_model": "fake-model",
+  "metrics": {
+    "total_orders": 5,
+    "status_category_breakdown": [
+      {
+        "category": "delivered",
+        "label": "Delivered",
+        "count": 1,
+        "percent": 20.0
+      },
+      {
+        "category": "in_transit",
+        "label": "In Transit",
+        "count": 1,
+        "percent": 20.0
+      },
+      {
+        "category": "pending",
+        "label": "Pending / Not Shipped",
+        "count": 2,
+        "percent": 40.0
+      },
+      {
+        "category": "cancelled",
+        "label": "Cancelled",
+        "count": 1,
+        "percent": 20.0
+      }
+    ],
+    "rates": {
+      "delivered_percent": 20.0,
+      "in_transit_percent": 20.0,
+      "pending_percent": 40.0,
+      "cancelled_percent": 20.0,
+      "rto_percent": 0.0,
+      "exception_percent": 0.0
+    },
+    "status_breakdown": [
+      {
+        "status": "Pending",
+        "count": 2,
+        "percent": 40.0
+      },
+      {
+        "status": "Delivered",
+        "count": 1,
+        "percent": 20.0
+      },
+      {
+        "status": "In Transit",
+        "count": 1,
+        "percent": 20.0
+      },
+      {
+        "status": "Cancelled",
+        "count": 1,
+        "percent": 20.0
+      }
+    ],
+    "cancellation_reasons": {
+      "cancelled_orders": 1,
+      "cancelled_orders_with_reason": 0,
+      "top_reasons": []
+    },
+    "courier_performance": [
+      {
+        "courier": "B",
+        "total_orders": 3,
+        "share_percent": 60.0,
+        "delivered": 0,
+        "in_transit": 0,
+        "pending": 2,
+        "cancelled": 1,
+        "rto": 0,
+        "exception": 0,
+        "delivery_rate_percent": 0.0,
+        "cancellation_rate_percent": 33.3,
+        "rto_rate_percent": 0.0
+      },
+      {
+        "courier": "A",
+        "total_orders": 2,
+        "share_percent": 40.0,
+        "delivered": 1,
+        "in_transit": 1,
+        "pending": 0,
+        "cancelled": 0,
+        "rto": 0,
+        "exception": 0,
+        "delivery_rate_percent": 50.0,
+        "cancellation_rate_percent": 0.0,
+        "rto_rate_percent": 0.0
+      }
+    ],
+    "distinct_couriers": 2,
+    "payment_mode_breakdown": [
+      {
+        "payment_mode": "COD",
+        "count": 1,
+        "percent": 20.0
+      },
+      {
+        "payment_mode": "ToPay",
+        "count": 1,
+        "percent": 20.0
+      },
+      {
+        "payment_mode": "Prepaid",
+        "count": 1,
+        "percent": 20.0
+      }
+    ],
+    "top_destination_states": [],
+    "top_destination_cities": [],
+    "zone_breakdown": [],
+    "order_date_range": null,
+    "order_value": {
+      "orders_with_value": 1,
+      "total": 88888.0,
+      "average": 88888.0,
+      "min": 88888.0,
+      "max": 88888.0
+    },
+    "weight": null,
+    "field_coverage": {
+      "status": {
+        "present": 5,
+        "percent": 100.0
+      },
+      "courier": {
+        "present": 5,
+        "percent": 100.0
+      },
+      "payment_mode": {
+        "present": 3,
+        "percent": 60.0
+      },
+      "cancellation_reason": {
+        "present": 0,
+        "percent": 0.0
+      },
+      "destination_state": {
+        "present": 0,
+        "percent": 0.0
+      },
+      "destination_city": {
+        "present": 0,
+        "percent": 0.0
+      },
+      "zone": {
+        "present": 0,
+        "percent": 0.0
+      },
+      "order_date": {
+        "present": 0,
+        "percent": 0.0
+      },
+      "order_value": {
+        "present": 1,
+        "percent": 20.0
+      },
+      "weight": {
+        "present": 0,
+        "percent": 0.0
+      }
+    },
+    "derived_percentages": [
+      {
+        "metric": "status_category_breakdown[0].percent",
+        "numerator": 1,
+        "denominator": 5,
+        "value": 20.0
+      },
+      {
+        "metric": "status_category_breakdown[1].percent",
+        "numerator": 1,
+        "denominator": 5,
+        "value": 20.0
+      },
+      {
+        "metric": "status_category_breakdown[2].percent",
+        "numerator": 2,
+        "denominator": 5,
+        "value": 40.0
+      },
+      {
+        "metric": "status_category_breakdown[3].percent",
+        "numerator": 1,
+        "denominator": 5,
+        "value": 20.0
+      },
+      {
+        "metric": "payment_mode_breakdown[0].percent",
+        "numerator": 1,
+        "denominator": 5,
+        "value": 20.0
+      },
+      {
+        "metric": "payment_mode_breakdown[1].percent",
+        "numerator": 1,
+        "denominator": 5,
+        "value": 20.0
+      },
+      {
+        "metric": "payment_mode_breakdown[2].percent",
+        "numerator": 1,
+        "denominator": 5,
+        "value": 20.0
+      },
+      {
+        "metric": "courier_performance[0].delivered_percent",
+        "numerator": 0,
+        "denominator": 3,
+        "value": 0.0
+      },
+      {
+        "metric": "courier_performance[0].in_transit_percent",
+        "numerator": 0,
+        "denominator": 3,
+        "value": 0.0
+      },
+      {
+        "metric": "courier_performance[0].pending_percent",
+        "numerator": 2,
+        "denominator": 3,
+        "value": 66.66666666666667
+      },
+      {
+        "metric": "courier_performance[0].cancelled_percent",
+        "numerator": 1,
+        "denominator": 3,
+        "value": 33.333333333333336
+      },
+      {
+        "metric": "courier_performance[0].rto_percent",
+        "numerator": 0,
+        "denominator": 3,
+        "value": 0.0
+      },
+      {
+        "metric": "courier_performance[0].exception_percent",
+        "numerator": 0,
+        "denominator": 3,
+        "value": 0.0
+      },
+      {
+        "metric": "courier_performance[1].delivered_percent",
+        "numerator": 1,
+        "denominator": 2,
+        "value": 50.0
+      },
+      {
+        "metric": "courier_performance[1].in_transit_percent",
+        "numerator": 1,
+        "denominator": 2,
+        "value": 50.0
+      },
+      {
+        "metric": "courier_performance[1].pending_percent",
+        "numerator": 0,
+        "denominator": 2,
+        "value": 0.0
+      },
+      {
+        "metric": "courier_performance[1].cancelled_percent",
+        "numerator": 0,
+        "denominator": 2,
+        "value": 0.0
+      },
+      {
+        "metric": "courier_performance[1].rto_percent",
+        "numerator": 0,
+        "denominator": 2,
+        "value": 0.0
+      },
+      {
+        "metric": "courier_performance[1].exception_percent",
+        "numerator": 0,
+        "denominator": 2,
+        "value": 0.0
+      },
+      {
+        "metric": "field_coverage.status.percent",
+        "numerator": 5,
+        "denominator": 5,
+        "value": 100.0
+      },
+      {
+        "metric": "field_coverage.courier.percent",
+        "numerator": 5,
+        "denominator": 5,
+        "value": 100.0
+      },
+      {
+        "metric": "field_coverage.payment_mode.percent",
+        "numerator": 3,
+        "denominator": 5,
+        "value": 60.0
+      },
+      {
+        "metric": "field_coverage.cancellation_reason.percent",
+        "numerator": 0,
+        "denominator": 5,
+        "value": 0.0
+      },
+      {
+        "metric": "field_coverage.destination_state.percent",
+        "numerator": 0,
+        "denominator": 5,
+        "value": 0.0
+      },
+      {
+        "metric": "field_coverage.destination_city.percent",
+        "numerator": 0,
+        "denominator": 5,
+        "value": 0.0
+      },
+      {
+        "metric": "field_coverage.zone.percent",
+        "numerator": 0,
+        "denominator": 5,
+        "value": 0.0
+      },
+      {
+        "metric": "field_coverage.order_date.percent",
+        "numerator": 0,
+        "denominator": 5,
+        "value": 0.0
+      },
+      {
+        "metric": "field_coverage.order_value.percent",
+        "numerator": 1,
+        "denominator": 5,
+        "value": 20.0
+      },
+      {
+        "metric": "field_coverage.weight.percent",
+        "numerator": 0,
+        "denominator": 5,
+        "value": 0.0
+      }
+    ],
+    "data_quality_notes": [
+      "Payment mode is missing for 2 of 5 orders.",
+      "No destination state field was found in the data.",
+      "No order date field was found in the data.",
+      "Order value is missing for 4 of 5 orders.",
+      "1 of 1 cancelled orders have no cancellation reason recorded.",
+      "The dataset is small (5 orders); percentages may not be representative.",
+      "Raw status tables show up to 15 labels; reasons, payment modes and destinations show up to 10 groups; courier tables and charts show up to 200 couriers. Omitted groups are not zero.",
+      "Shipping charges use only valid totalCharge values. Missing or invalid values are excluded, not zero. Averages use orders with valid charges. Invoice value and collectableAmount are separate measures. Charges on cancelled orders are not verified losses or revenue. Financial tables show at most 200 groups.",
+      "All rates describe supplied records only; external summary counters are not combined. Full dataset coverage is not assumed."
+    ],
+    "shipping_financial": {
+      "total_shipping_charges": "10.30",
+      "average_charge_per_order": "3.43",
+      "charges_associated_with_cancelled_orders": "10.00",
+      "orders_with_valid_charge": 3,
+      "orders_with_missing_charge": 1,
+      "orders_with_invalid_charge": 1,
+      "cancelled_orders_with_valid_charge": 1,
+      "currency": "As supplied; currency is not inferred",
+      "average_denominator": "orders_with_valid_charge",
+      "courier_charges": [
+        {
+          "courier": "A",
+          "orders": 2,
+          "orders_with_valid_charge": 2,
+          "total_shipping_charges": "0.30",
+          "average_charge_per_order": "0.15"
+        },
+        {
+          "courier": "B",
+          "orders": 3,
+          "orders_with_valid_charge": 1,
+          "total_shipping_charges": "10.00",
+          "average_charge_per_order": "10.00"
+        }
+      ],
+      "payment_mode_charges": [
+        {
+          "payment_mode": "COD",
+          "orders": 1,
+          "orders_with_valid_charge": 1,
+          "total_shipping_charges": "0.10",
+          "average_charge_per_order": "0.10"
+        },
+        {
+          "payment_mode": "Not specified",
+          "orders": 2,
+          "orders_with_valid_charge": 0,
+          "total_shipping_charges": null,
+          "average_charge_per_order": null
+        },
+        {
+          "payment_mode": "Prepaid",
+          "orders": 1,
+          "orders_with_valid_charge": 1,
+          "total_shipping_charges": "10.00",
+          "average_charge_per_order": "10.00"
+        },
+        {
+          "payment_mode": "ToPay",
+          "orders": 1,
+          "orders_with_valid_charge": 1,
+          "total_shipping_charges": "0.20",
+          "average_charge_per_order": "0.20"
+        }
+      ],
+      "cod_shipping_charges": "0.10",
+      "topay_shipping_charges": "0.20",
+      "prepaid_shipping_charges": "10.00"
+    },
+    "scope": {
+      "kind": "supplied_records",
+      "records_analyzed": 5,
+      "reported_total": null,
+      "denominator": "supplied_records"
+    }
+  }
+}

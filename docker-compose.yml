@@ -1,0 +1,55 @@
+name: ai-box
+services:
+  backend:
+    build: .
+    image: ai-box-backend:${IMAGE_TAG:-local}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Ignore host-development URL; start.py constructs an escaped container URL.
+      DATABASE_URL: ""
+      POSTGRES_DB: ${POSTGRES_DB:-ai_box}
+      POSTGRES_USER: ${POSTGRES_USER:-ai_box}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      OUTPUT_DIR: /app/output
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - report_output:/app/output
+    depends_on:
+      postgres:
+        condition: service_healthy
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ai_box}
+      POSTGRES_USER: ${POSTGRES_USER:-ai_box}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  postgres_data:
+    name: ai-box_postgres_data
+  report_output:
+    name: ai-box_report_output

@@ -1,0 +1,5 @@
+# Explicit opt-in for Python running on the host.
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5434}:5432"
