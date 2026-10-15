@@ -63,45 +63,42 @@ def extract_chart_specs(text: str) -> list[dict]:
 def detect_intent(prompt):
     text = prompt.lower()
 
-    has_specific_chart_target = any(k in text for k in [
-        'area', 'line', 'bar', 'column', 'pie', 'donut', 'doughnut',
-        'courier', 'status', 'first', 'second', '1st', '2nd', 'pehla', 'dusra'
-    ])
+    types = [
+        ("area", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?area\b|\barea\s+(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
+        ("line", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?line\b|\bline\s+(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
+        ("bar", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?(?:bar|column)\b|\b(?:bar|column)\s+(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
+        ("pie", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?pie\b|\bpie\s+(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
+        ("donut", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?(?:donut|doughnut)\b|\b(?:donut|doughnut)\s+(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
+        ("first", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?(?:first|1st|pehla)\s*(?:charts?|graphs?)?\b|\b(?:first|1st|pehla)\s*(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
+        ("second", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?(?:second|2nd|dusra)\s*(?:charts?|graphs?)?\b|\b(?:second|2nd|dusra)\s*(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
+        ("courier", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?courier\s+(?:charts?|graphs?)\b|\bcourier\s+(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
+        ("status", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?(?:status|delivery)\s+(?:charts?|graphs?)\b|\b(?:status|delivery)\s+(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
+    ]
+
+    excluded_charts_list: list[str] = []
+    for name, pat in types:
+        if re.search(pat, text):
+            if name == "pie" and re.search(r"\b(?:show|add|in)\s+.*?\bpie\s+chart\b", text):
+                continue
+            if name == "donut" and re.search(r"\b(?:show|add|in)\s+.*?\b(?:donut|doughnut)\s+chart\b", text):
+                continue
+            if name == "donut":
+                excluded_charts_list.extend(["donut", "doughnut"])
+            else:
+                excluded_charts_list.append(name)
+
     remove_all_charts = (
         bool(re.search(
             r"\b(?:no|without|remove|delete|omit|drop|hide|exclude)\s+(?:all\s+)?(?:the\s+|this\s+|that\s+)?(?:graphs?|charts?|visualizations?|visuals?)\b"
-            r"|\b(?:graphs?|charts?|visuals?)\s*(?:ko\s+)?(?:hata\s*(?:d[eo]|o|ye)?|mat\s+dikh?a[on]?|nahi\s+chahiye|remove|delete|drop)\b"
+            r"|\b(?:graphs?|charts?|visuals?)\s*(?:ko\s+)?(?:hata\s*(?:d[eo]|o|ye)?|mat\s+dikh?a[on]?|nahi\s+chahiye|remove|delete|drop)\b(?!\s+(?:the\s+|this\s+|that\s+|a\s+|an\s+)?tables?\b)"
             r"|\b(?:hata\s*(?:d[eo]|o|ye)?|mat\s+dikh?a[on]?)\s+(?:all\s+)?(?:the\s+|this\s+|that\s+)?(?:graphs?|charts?)\b",
             text
         ))
-        and not has_specific_chart_target
+        and not bool(excluded_charts_list)
     )
 
-    excluded_charts_list: list[str] = []
-    if remove_all_charts or (bool(re.search(r"\b(no|without)\s+(?:all\s+)?(?:graphs?|charts?|visuals?)\b", text)) and not has_specific_chart_target):
-        excluded_charts_list.append("all")
-    else:
-        types = [
-            ("area", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?area\b|\barea\s+(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
-            ("line", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?line\b|\bline\s+(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
-            ("bar", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?(?:bar|column)\b|\b(?:bar|column)\s+(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
-            ("pie", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?pie\b|\bpie\s+(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
-            ("donut", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?(?:donut|doughnut)\b|\b(?:donut|doughnut)\s+(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
-            ("first", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?(?:first|1st|pehla)\s*(?:charts?|graphs?)?\b|\b(?:first|1st|pehla)\s*(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
-            ("second", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?(?:second|2nd|dusra)\s*(?:charts?|graphs?)?\b|\b(?:second|2nd|dusra)\s*(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
-            ("courier", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?courier\s+(?:charts?|graphs?)\b|\bcourier\s+(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
-            ("status", r"\b(?:remove|delete|omit|drop|hide|exclude|no|without)\s+(?:the\s+|this\s+|an?\s+)?(?:status|delivery)\s+(?:charts?|graphs?)\b|\b(?:status|delivery)\s+(?:charts?|graphs?)\s*(?:ko\s+)?(?:hata|mat|remove|delete|drop)\b"),
-        ]
-        for name, pat in types:
-            if re.search(pat, text):
-                if name == "pie" and re.search(r"\b(?:show|add|in)\s+.*?\bpie\s+chart\b", text):
-                    continue
-                if name == "donut" and re.search(r"\b(?:show|add|in)\s+.*?\b(?:donut|doughnut)\s+chart\b", text):
-                    continue
-                if name == "donut":
-                    excluded_charts_list.extend(["donut", "doughnut"])
-                else:
-                    excluded_charts_list.append(name)
+    if remove_all_charts or (bool(re.search(r"\b(no|without)\s+(?:all\s+)?(?:graphs?|charts?|visuals?)\b", text)) and not bool(excluded_charts_list)):
+        excluded_charts_list = ["all"]
 
     has_positive_graph_word = bool(re.search(r"\b(graphs?|charts?|visualizations?|donut|doughnut)\b", text)) and not (
         remove_all_charts or bool(re.search(r"\b(no|without)\s+(graphs?|charts?)", text))
@@ -150,7 +147,7 @@ def detect_intent(prompt):
     recommendations = mode in {"detailed", "comparison"} or bool(re.search(r"recommend|suggest|optimization", text))
     no_graphs = "all" in excluded_charts_list or bool(re.search(r"\b(no|without)\s+(graphs?|charts?|visuals?)\b", text))
     has_graph_word = bool(re.search(r"\b(graphs?|charts?|visualizations?|visuals?|donut|doughnut)\b", text)) and not (
-        no_graphs or bool(re.search(r"\b(?:remove|delete|omit|drop|hide|exclude)\s+.*?\b(?:graphs?|charts?|visualizations?|visuals?)\b|\b(?:graphs?|charts?|visuals?)\s*(?:hata|mat\s+dikh|nahi|remove|delete|drop)\b", text))
+        no_graphs or bool(re.search(r"\b(?:remove|delete|omit|drop|hide|exclude)\s+.*?\b(?:graphs?|charts?|visualizations?|visuals?)\b|\b(?:graphs?|charts?|visuals?)\s*(?:hata|mat\s+dikh|nahi|remove|delete|drop)\b(?!\s+(?:the\s+|this\s+|that\s+|a\s+|an\s+)?tables?\b)", text))
     )
     graphs = (not no_graphs) and (has_graph_word or (mode in {"detailed", "comparison"} and not bool(excluded_charts_list)))
 

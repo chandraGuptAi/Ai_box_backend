@@ -272,3 +272,17 @@ def test_chart_removal_followup(client, fake_ai):
     assert resp4.status_code == 200
     report4 = resp4.json()
     assert len(report4["structured_report"]["charts"]) == 0
+
+    # Follow-up 4: "Include delivery status breakdown remove the chart from report"
+    resp5 = client.post(
+        "/api/reports/generate",
+        json={
+            "report_type": "shipment",
+            "prompt": "Include  delivery status breakdown remove the chart from report",
+            "data": shipment_data,
+            "previous_report": report1,
+        },
+    )
+    assert resp5.status_code == 200
+    report5 = resp5.json()
+    assert len(report5["structured_report"]["charts"]) == 0

@@ -438,7 +438,7 @@ class ReportService:
 
             prompt_lower = (prompt or "").lower()
             if not excluded_targets:
-                if re.search(r"\b(?:no|without|remove|delete|omit|drop|hide|exclude)\s+(?:all\s+)?(?:the\s+|this\s+|that\s+)?(?:graphs?|charts?|visualizations?|visuals?)\b|\b(?:graphs?|charts?|visuals?)\s*(?:hata|mat\s+dikh|nahi|remove|delete|drop)\b", prompt_lower):
+                if re.search(r"\b(?:no|without|remove|delete|omit|drop|hide|exclude)\s+(?:all\s+)?(?:the\s+|this\s+|that\s+)?(?:graphs?|charts?|visualizations?|visuals?)\b|\b(?:graphs?|charts?|visuals?)\s*(?:hata|mat\s+dikh|nahi|remove|delete|drop)\b(?!\s+(?:the\s+|this\s+|that\s+|a\s+|an\s+)?tables?\b)", prompt_lower):
                     excluded_targets.add("all")
 
             if "all" in excluded_targets:
