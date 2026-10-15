@@ -124,6 +124,8 @@ class ReportRequest(BaseModel):
         default=None,
         description="Optional existing report to refine or append new sections to incrementally.",
     )
+    company_name: Text | None = Field(default=None, max_length=200, description="Logged-in seller's company or user name.")
+    customer_id: Text | None = Field(default=None, max_length=100, description="Customer or account identifier.")
 
 
 # --- AI generated content ---------------------------------------------------
@@ -207,6 +209,8 @@ class ReportDocument(BaseModel):
     # Calculated in Python only; optional so v2 clients and saved reports keep working.
     insights: dict[str, Any] | None = None
     disclaimer: Text = Field(default=DEFAULT_DISCLAIMER, max_length=1500)
+    company_name: Text | None = Field(default=None, max_length=200)
+    customer_id: Text | None = Field(default=None, max_length=100)
 
 
 class ReportResponse(ReportDocument):
@@ -430,6 +434,8 @@ class StructuredReport(StrictModel):
     charts: list[ReportChart] = Field(default_factory=list)
     chart_notes: list[ChartNote] = Field(default_factory=list)
     scope: dict[str, Any]
+    company_name: Text | None = None
+    customer_id: Text | None = None
 
 ReportDocument.model_rebuild()
 ReportResponse.model_rebuild()

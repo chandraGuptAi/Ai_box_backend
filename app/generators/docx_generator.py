@@ -31,7 +31,9 @@ SEVERITY_COLORS = {
 def generate_docx(report: ReportDocument) -> bytes:
     doc = Document()
     _configure(doc)
-    _add_footer(doc, report.report_name)
+    company = (report.company_name or (report.structured_report.company_name if report.structured_report else None) or "").strip()
+    footer_label = f"{company} · {report.report_name}" if company else report.report_name
+    _add_footer(doc, footer_label)
 
     content = report.content
     structured = report.structured_report
@@ -162,6 +164,17 @@ def _configure(doc: DocumentType) -> None:
 
 
 def _add_title_block(doc: DocumentType, report: ReportDocument) -> None:
+    company = (report.company_name or (report.structured_report.company_name if report.structured_report else None) or "").strip()
+    customer_id = (report.customer_id or (report.structured_report.customer_id if report.structured_report else None) or "").strip()
+
+    if company:
+        comp_para = doc.add_paragraph()
+        comp_para.paragraph_format.space_after = Pt(2)
+        comp_run = comp_para.add_run(f"PREPARED FOR: {company.upper()}" + (f" (ID: {customer_id})" if customer_id else ""))
+        comp_run.bold = True
+        comp_run.font.size = Pt(9.5)
+        comp_run.font.color.rgb = PRIMARY
+
     label = doc.add_paragraph()
     run = label.add_run(report.report_name.upper())
     run.bold = True
@@ -170,10 +183,13 @@ def _add_title_block(doc: DocumentType, report: ReportDocument) -> None:
 
     doc.add_paragraph(report.content.title, style="Title")
 
-    meta = [
+    meta = []
+    if company:
+        meta.append(("Account", f"{company}" + (f" ({customer_id})" if customer_id else "")))
+    meta.extend([
         ("Generated", report.generated_at.strftime("%d %b %Y, %H:%M UTC")),
         ("Records analysed", f"{report.records_analyzed:,}"),
-    ]
+    ])
     if report.prompt and not report.structured_report:
         meta.append(("Analysis focus", report.prompt))
     for key, value in meta:

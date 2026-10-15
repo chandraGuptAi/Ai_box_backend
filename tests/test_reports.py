@@ -1325,3 +1325,33 @@ def test_courier_names_do_not_hide_other_numbers(text):
         validate_numerical_claims({"findings": [{"detail": text}]}, COURIER_LABEL_METRICS, [])
     assert error.value.code == "ai_unverified_numbers"
     assert "Ekart" in error.value.rejections[0]["context"]  # diagnostics keep the readable name
+
+
+def test_company_name_and_customer_id_in_report_and_exporters():
+    from app.generators.pdf_generator import generate_pdf
+    from app.generators.docx_generator import generate_docx
+    from app.models.report_schema import ReportDocument, ReportContent
+    import datetime
+
+    doc = ReportDocument(
+        report_type="shipment_summary",
+        report_name="Shipment Performance Report",
+        generated_at=datetime.datetime.now(datetime.timezone.utc),
+        records_analyzed=42,
+        company_name="Indu Enterprises",
+        customer_id="CUST-1029",
+        content=ReportContent(
+            title="Operational Overview",
+            executive_summary="Summary text here.",
+            sections=[],
+            findings=[],
+            recommendations=[],
+            data_limitations=[],
+        ),
+    )
+    pdf_bytes = generate_pdf(doc)
+    assert len(pdf_bytes) > 0
+
+    docx_bytes = generate_docx(doc)
+    assert len(docx_bytes) > 0
+

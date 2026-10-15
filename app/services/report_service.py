@@ -317,8 +317,20 @@ class ReportService:
             except AIResponseError as exc:
                 exc.message = ("The AI report contained numbers that do not match your data, so it was not used and "
                                "no report was created. Please try again, or narrow your request.")
-                exc.details = {**(exc.details or {}), "ai_calls": 1}
-                raise
+        company = (
+            request.company_name
+            or (request.data.get("company_name") if isinstance(request.data, dict) else None)
+            or (request.data.get("account_summary", {}).get("company_name") if isinstance(request.data, dict) and isinstance(request.data.get("account_summary"), dict) else None)
+        )
+        customer_id = (
+            request.customer_id
+            or (request.data.get("customer_id") if isinstance(request.data, dict) else None)
+            or (request.data.get("account_summary", {}).get("customer_id") if isinstance(request.data, dict) and isinstance(request.data.get("account_summary"), dict) else None)
+        )
+        if request.previous_report:
+            prev = request.previous_report
+            company = company or prev.get("company_name") or (prev.get("structured_report", {}).get("company_name") if isinstance(prev.get("structured_report"), dict) else None)
+            customer_id = customer_id or prev.get("customer_id") or (prev.get("structured_report", {}).get("customer_id") if isinstance(prev.get("structured_report"), dict) else None)
 
         report = ReportResponse(
             report_id=uuid.uuid4().hex,
@@ -333,6 +345,8 @@ class ReportService:
             metrics=analysis.metrics,
             content=content,
             disclaimer=DEFAULT_DISCLAIMER,
+            company_name=company,
+            customer_id=customer_id,
             generation={"ai_calls": 0 if narrative_source == "deterministic" else 1,
                         "narrative_source": narrative_source, "notice": notice},
         )
@@ -369,7 +383,8 @@ class ReportService:
             title=content.title, subtitle=report.report_name, generated_at=report.generated_at,
             executive_summary=summary, metrics=cards,
             sections=display_sections, findings=content.findings, recommendations=content.recommendations,
-            limitations=limitations, charts=charts, chart_notes=chart_notes, scope=analysis.metrics.get("scope", {}))
+            limitations=limitations, charts=charts, chart_notes=chart_notes, scope=analysis.metrics.get("scope", {}),
+            company_name=company, customer_id=customer_id)
         if insights:
             insights["meta"] = {"narrative_source": narrative_source, "fallback_used": narrative_source == "deterministic_fallback",
                                 "ai_model": self._ai.model, "generated_at": report.generated_at.isoformat()}
@@ -510,11 +525,17 @@ class ReportService:
             report.tables = [ReportTable.model_validate(t) for t in merged_tables[:30]]
             report.content.findings = [ReportFinding.model_validate(f) for f in merged_findings[:30]]
             report.content.recommendations = [ReportRecommendation.model_validate(r) for r in merged_recs[:25]]
+            if not report.company_name and prev.get("company_name"):
+                report.company_name = prev.get("company_name")
+            if not report.customer_id and prev.get("customer_id"):
+                report.customer_id = prev.get("customer_id")
             if report.structured_report:
                 report.structured_report.sections = [DisplaySection.model_validate(s) for s in merged_sections[:50]]
                 report.structured_report.charts = [ReportChart.model_validate(c) for c in merged_charts[:10]]
                 report.structured_report.findings = report.content.findings
                 report.structured_report.recommendations = report.content.recommendations
+                report.structured_report.company_name = report.company_name
+                report.structured_report.customer_id = report.customer_id
         except Exception:
             logger.exception("Failed to merge report with previous report; returning new report as-is.")
         return report

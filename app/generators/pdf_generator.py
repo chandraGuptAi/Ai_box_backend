@@ -94,6 +94,7 @@ def _styles(regular: str, bold: str) -> dict[str, ParagraphStyle]:
     return {
         "body": base,
         "badge": ParagraphStyle("Badge", parent=base, fontName=bold, fontSize=8, leading=10, textColor=BRAND, spaceAfter=2),
+        "company_header": ParagraphStyle("CompanyHeader", parent=base, fontName=bold, fontSize=10.5, leading=13, textColor=PRIMARY, spaceAfter=2),
         "title": ParagraphStyle("Title", parent=base, fontName=bold, fontSize=18, leading=22, textColor=PRIMARY, spaceAfter=4),
         "subtitle": ParagraphStyle("Subtitle", parent=base, fontName=regular, fontSize=10.5, leading=14, textColor=MUTED, spaceAfter=6),
         "meta": ParagraphStyle("Meta", parent=base, fontSize=8, leading=11, textColor=MUTED, spaceAfter=0),
@@ -272,6 +273,15 @@ def generate_pdf(report: ReportDocument) -> bytes:
     story: list = []
 
     # 1. Title Block
+    company = (report.company_name or (report.structured_report.company_name if report.structured_report else None) or "").strip()
+    customer_id = (report.customer_id or (report.structured_report.customer_id if report.structured_report else None) or "").strip()
+
+    if company:
+        comp_badge = f"PREPARED FOR: {escape(company.upper())}"
+        if customer_id:
+            comp_badge += f" &nbsp;·&nbsp; <font color=\"#6B7280\">ID: {escape(customer_id)}</font>"
+        story.append(Paragraph(comp_badge, styles["company_header"]))
+
     title_text = structured.title if structured and structured.title else (content.title if content else report.report_name)
     story.append(_p(title_text, styles["title"]))
 
@@ -279,11 +289,14 @@ def generate_pdf(report: ReportDocument) -> bytes:
     if subtitle and subtitle.lower() != title_text.lower():
         story.append(_p(subtitle, styles["subtitle"]))
 
-    meta_parts = [
+    meta_parts = []
+    if company:
+        meta_parts.append(f"<b>Account:</b> {escape(company)}" + (f" ({escape(customer_id)})" if customer_id else ""))
+    meta_parts.extend([
         f"<b>Generated:</b> {report.generated_at.strftime('%d %b %Y, %H:%M UTC')}",
         f"<b>Records:</b> {report.records_analyzed:,}",
         f"<b>Scope:</b> Supplied report data",
-    ]
+    ])
     story.append(Paragraph(" &nbsp;&nbsp;·&nbsp;&nbsp; ".join(meta_parts), styles["meta"]))
     story.append(Spacer(1, 3 * mm))
     story.append(HRFlowable(width="100%", thickness=1.5, color=BRAND, spaceAfter=8))
@@ -525,7 +538,10 @@ def generate_pdf(report: ReportDocument) -> bytes:
         canvas.line(document.leftMargin, page_height - 12 * mm, page_width - document.rightMargin, page_height - 12 * mm)
         canvas.setFont(regular, 7.5)
         canvas.setFillColor(MUTED)
-        canvas.drawString(document.leftMargin, page_height - 10 * mm, report.report_name)
+        running_title = f"{company} · {report.report_name}" if company else report.report_name
+        if len(running_title) > 65:
+            running_title = running_title[:62] + "..."
+        canvas.drawString(document.leftMargin, page_height - 10 * mm, running_title)
         canvas.drawRightString(page_width - document.rightMargin, page_height - 10 * mm, "Confidential")
 
         # Footer running line
