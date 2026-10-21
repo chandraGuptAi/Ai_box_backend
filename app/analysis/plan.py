@@ -181,6 +181,7 @@ class ReportExecutionProposal(BaseModel):
 
 @dataclass(frozen=True)
 class AnalysisPlan:
+    planner_calls: int = 0
     report_title: str | None = None
     detail_level: str = "standard"
     lookup: bool = False             # "show/list these records": answered by Python alone

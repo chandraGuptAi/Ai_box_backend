@@ -331,7 +331,7 @@ def test_plan_rejection_happens_before_any_upstream_request(failure):
     service = ReportService(ai, config=cfg, source=ShipmentSource(cfg, transport=httpx.MockTransport(upstream)))
     with pytest.raises((ClarificationRequiredError, AIResponseError)):
         asyncio.run(service.generate_report(request, shipment_credential=TOKEN, user_id="synthetic-account"))
-    assert upstream.requests == [] and len(ai.calls) == 1
+    assert upstream.requests == [] and len(ai.calls) == (2 if failure == "invalid" else 1)
 
 
 def test_dynamic_percentages_use_section_denominator_and_requested_group_dimensions():
@@ -389,3 +389,27 @@ def test_missing_report_title_uses_shared_subject_instead_of_all_headings():
     plan = AnalysisPlan(sections=tuple(ExecutionSection.model_validate(s) for s in specs))
     assert concise_report_title(plan, get_adapter("shipment")) == "Payment Mode Analysis"
 
+
+
+@pytest.mark.parametrize("clarification", [False, True])
+def test_general_report_and_graph_generates_without_technical_plan_error(clarification):
+    def invalid(plan):
+        return {**plan, "clarifications": ["Which metrics?"]} if clarification else {"unexpected": "invalid plan"}
+    ai = PlannedAI(alter_plan=invalid)
+    report, _ = generate("create a report and add a graph with it", ai=ai)
+    assert report.records_analyzed == 8
+    assert report.structured_report.charts[0].type == "bar"
+    assert report.content.title == "Shipment Overview"
+    assert report.generation["ai_calls"] == (2 if clarification else 3)
+
+
+def test_invalid_plan_is_repaired_automatically_before_data_fetch():
+    attempts = []
+    def repair(plan):
+        attempts.append(plan)
+        return {"unexpected": "bad plan"} if len(attempts) == 1 else plan
+    report, ai = generate(ai=PlannedAI(alter_plan=repair))
+    assert report.generation["ai_calls"] == 3
+    assert ids(report) == [s["id"] for s in EXAMPLE_SECTIONS]
+    correction = json.loads(ai.calls[1][-1]["content"])
+    assert correction["prompt"] == EXAMPLE and correction["validation_feedback"]

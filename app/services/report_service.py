@@ -606,7 +606,7 @@ class ReportService:
                 raise NoMatchingRecordsError("No data available for the selected filters and analysis.",
                     details={"matching_records": 0, "selected_filters": selected.to_dict() if selected else None})
             return await self._generate_section_report(request, approved_plan, scope, scoped, snapshot, source,
-                                                       selected, adapter, 1)
+                                                       selected, adapter, approved_plan.planner_calls)
 
         intent = detect_intent(request.prompt or definition.default_prompt) if request.report_type == "shipment" else None
         chart_adapter = get_adapter(definition.report_type)
