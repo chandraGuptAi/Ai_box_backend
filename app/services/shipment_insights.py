@@ -33,9 +33,9 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "shipping_charge": ("totalcharge", "shippingcharge", "shippingcharges", "freightcharge"),
     "invoice_value": ("invoicetotalamount", "invoicevalue", "invoiceamount", "ordervalue"),
     "eway_bill": ("ewaybill", "ewaybillno", "ewaybillnumber", "ewaybillfileurl", "ewaybilldocument"),
-    "pickup_date": ("pickupdate", "pickeddate", "pickedupdate", "pickupdatetime", "pickupdoneat"),
-    "delivery_date": ("deliverydate", "delivereddate", "deliveryedate", "deliveredat", "deliverydatetime"),
-    "courier_remark": ("courierremark", "courierremarks", "lastremark", "trackingremark", "statusremark"),
+    "pickup_date": ("domestictransitstatsdatepickup", "pickupdate", "pickeddate", "pickedupdate", "pickupdatetime", "pickupdoneat"),
+    "delivery_date": ("domestictransitstatsdatedelivery", "deliverydate", "delivereddate", "deliveryedate", "deliveredat", "deliverydatetime"),
+    "courier_remark": ("domestictransitstatscourierremarks", "courierremark", "courierremarks", "lastremark", "trackingremark", "statusremark"),
     "cancel_remark": ("ordercancelremark", "cancelremark", "cancellationremark"),
     "cancel_reason": ("ordercancelreason", "cancelreason", "cancellationreason"),
 }
@@ -260,7 +260,10 @@ def build_insights(data: dict[str, Any], as_of: date | None = None) -> dict[str,
 
     statuses = {categorize_status(r["status"]) for r in rows}
     single_status = len(statuses) == 1 and n > 0
-    label = report_filter.get("status_label") or (rows[0]["status"] if single_status and rows[0]["status"] else "All")
+    selected_label = report_filter.get("status_label")
+    if single_status and str(selected_label or "").strip().lower() in {"", "all", "all statuses", "all shipments"}:
+        selected_label = rows[0]["status"]
+    label = selected_label or "All"
     dates = sorted(r["order_date"] for r in rows if r["order_date"])
     period_from = report_filter.get("from_date") or (dates[0] if dates else None)
     period_to = report_filter.get("to_date") or (dates[-1] if dates else None)
@@ -329,7 +332,7 @@ def insights_narrative(insights: dict[str, Any]) -> dict[str, Any]:
     issues = insights["issues"]
     return {
         "title": insights["title"][:200],
-        "executive_summary": {"heading": "Executive Summary", "paragraphs": [insights["takeaway"][:1200]], "highlights": []},
+        "executive_summary": {"heading": "Executive Summary", "paragraphs": [f"{insights['kpis']['orders']} shipments analysed."], "highlights": []},
         "sections": [],
         "findings": [{"title": i["issue"][:250], "detail": f"{i['orders']} of {insights['kpis']['orders']} shipments.",
                       "severity": severity[i["severity"]]} for i in issues][:20],

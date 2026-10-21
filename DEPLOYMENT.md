@@ -255,6 +255,23 @@ server {
 }
 ```
 
+Shipment reports send `X-Shipment-Authorization` (the user's BigShip token). Nginx forwards it unchanged by
+default; do not add `proxy_set_header X-Shipment-Authorization ""` or `underscores_in_headers`-dependent renames.
+Browser CORS preflight (`OPTIONS`) carries no credentials, so Basic Auth must not apply to it, otherwise every
+AI Box call from Angular fails before reaching FastAPI. Move Basic Auth from the `server` block into
+`limit_except`, which applies it to every method except `OPTIONS`:
+
+```nginx
+    location / {
+        limit_except OPTIONS {
+            auth_basic "AI Box";
+            auth_basic_user_file /etc/nginx/ai-box.htpasswd;
+        }
+        proxy_pass http://127.0.0.1:8000;
+        # ... the other proxy_* settings above ...
+    }
+```
+
 ```bash
 sudo ln -s /etc/nginx/sites-available/ai-box /etc/nginx/sites-enabled/ai-box
 sudo nginx -t

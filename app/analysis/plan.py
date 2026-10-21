@@ -9,6 +9,9 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import date
 from typing import Any
+import re
+from typing import Literal
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.analysis.vocabulary import PlanVocabulary
 from app.charts.fields import DatasetAdapter
@@ -76,6 +79,105 @@ class Unsupported:
     missing: tuple[str, ...] = ()
 
 
+class ExecutionFilter(BaseModel):
+    """A registered field/operator pair; validated before data is fetched."""
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    field: str
+    op: Literal["eq", "ne", "in", "not_in", "gt", "gte", "lt", "lte", "between"]
+    value: str | float | list[str] | list[float]
+
+    @model_validator(mode="after")
+    def registered_filter(self):
+        from app.charts.fields import get_adapter
+        adapter = get_adapter("shipment")
+        if self.field not in adapter.fields:
+            raise ValueError("Unregistered filter field")
+        numeric = adapter.fields[self.field].kind == "number"
+        if numeric:
+            values = self.value if isinstance(self.value, list) else [self.value]
+            if self.op not in {"gt", "gte", "lt", "lte", "between"} or any(isinstance(v, bool) or not isinstance(v, (int, float)) or _number(v) is None for v in values):
+                raise ValueError("Invalid numeric filter")
+            if (self.op == "between" and (len(values) != 2 or values[0] > values[1])) or (self.op != "between" and isinstance(self.value, list)):
+                raise ValueError("Invalid numeric bounds")
+        elif adapter.fields[self.field].kind != "category" or self.op not in {"eq", "ne", "in", "not_in"}:
+            raise ValueError("Only registered category/numeric analysis filters are supported")
+        elif self.op in {"in", "not_in"}:
+            if not isinstance(self.value, list) or not self.value or not all(isinstance(v, str) and v.strip() for v in self.value):
+                raise ValueError("Membership filters need nonempty strings")
+        elif not isinstance(self.value, str) or not self.value.strip():
+            raise ValueError("Category filters need a string")
+        if self.field == "status_category":
+            from app.analysis.vocabulary import get_vocabulary
+            values = self.value if isinstance(self.value, list) else [self.value]
+            if any(v not in get_vocabulary("shipment").status_values for v in values):
+                raise ValueError("Unknown normalized status")
+        if self.field == "rto_stage":
+            values = self.value if isinstance(self.value, list) else [self.value]
+            if any(v not in {"pending", "completed", "unknown", "not_rto"} for v in values):
+                raise ValueError("Unknown return stage")
+        return self
+
+
+class ExecutionSection(BaseModel):
+    """Content is selected by the model; operations are selected from the Python registry."""
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    id: str = Field(pattern=r"^[a-z][a-z0-9_]{0,47}$")
+    title: str = Field(min_length=1, max_length=160)
+    requirement_ids: tuple[str, ...] = Field(min_length=1, max_length=8)
+    dimensions: tuple[str, ...] = Field(default=(), max_length=3)
+    metrics: tuple[str, ...] = Field(min_length=1, max_length=8)
+    filters: tuple[ExecutionFilter, ...] = Field(default=(), max_length=8)
+    required_fields: tuple[str, ...] = Field(default=(), max_length=20)
+    ranking_metric: str | None = None
+    direction: Literal["desc", "asc"] = "desc"
+    limit: int = Field(default=20, ge=1, le=200)
+    charts: tuple[Literal["bar", "pie", "doughnut", "line", "area", "histogram", "scatter"], ...] = ()
+    missing_data: Literal["explicit_unavailable", "clarify"] = "explicit_unavailable"
+    narrative: Literal["summary", "recommendations", "summary_and_recommendations"] = "summary"
+
+    @model_validator(mode="after")
+    def registered_components(self):
+        from app.charts.fields import get_adapter
+        adapter = get_adapter("shipment")
+        if any(d not in adapter.fields or adapter.fields[d].kind not in {"category", "date"} for d in self.dimensions):
+            raise ValueError("Grouping dimension is not registered")
+        if any(m not in adapter.measures for m in self.metrics):
+            raise ValueError("Metric operation is not registered")
+        if self.ranking_metric and self.ranking_metric not in self.metrics:
+            raise ValueError("Ranking metric must appear in the section")
+        if any(f not in adapter.fields for f in self.required_fields):
+            raise ValueError("Required field is not registered")
+        if any(not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", r) for r in self.requirement_ids):
+            raise ValueError("Invalid requirement ID")
+        if len(set(self.requirement_ids)) != len(self.requirement_ids) or len(set(self.dimensions)) != len(self.dimensions) or len(set(self.metrics)) != len(self.metrics):
+            raise ValueError("Duplicate requirement, dimension or metric")
+        return self
+
+
+class ReportExecutionProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    intent: str = Field(min_length=1, max_length=160)
+    required_source: Literal["shipments"] = "shipments"
+    source_scope: dict
+    cohort: tuple[ExecutionFilter, ...] = Field(default=(), max_length=8)
+    sections: tuple[ExecutionSection, ...] = Field(default=(), max_length=20)
+    requirement_ids: tuple[str, ...] = Field(default=(), max_length=40)
+    clarifications: tuple[str, ...] = Field(default=(), max_length=5)
+    limitations: tuple[str, ...] = Field(default=(), max_length=10)
+
+    @model_validator(mode="after")
+    def coverage(self):
+        ids = [s.id for s in self.sections]
+        requirements = [r for s in self.sections for r in s.requirement_ids]
+        if len(set(ids)) != len(ids) or len(set(self.requirement_ids)) != len(self.requirement_ids):
+            raise ValueError("Duplicate section or requirement IDs")
+        if set(requirements) != set(self.requirement_ids):
+            raise ValueError("Every requirement must have a section")
+        if not self.sections and not self.clarifications:
+            raise ValueError("An accepted plan needs requested sections")
+        return self
+
+
 @dataclass(frozen=True)
 class AnalysisPlan:
     detail_level: str = "standard"
@@ -93,6 +195,8 @@ class AnalysisPlan:
     answerable: bool = True
     ambiguous: bool = False
     source: str = "rules"            # "rules" | "rules+ai"
+    sections: tuple[ExecutionSection, ...] = ()
+    intent: str = "shipment_analysis"
 
     @property
     def scoped(self) -> bool:
@@ -131,6 +235,16 @@ class AnalysisPlan:
             "topics": list(self.topics),
             "unsupported": [{"requested": u.requested, "reason": u.reason, "missing": list(u.missing)} for u in self.unsupported],
             "notes": list(self.notes),
+            "sections": [s.model_dump() for s in self.sections],
+            "requirement_ids": list(dict.fromkeys(r for s in self.sections for r in s.requirement_ids)),
+            "metric_definitions": {name: {"label": adapter.measures[name].label,
+                "operation": adapter.measures[name].agg, "field": adapter.measures[name].field,
+                "numerator_filters": [{"field": field, "values": sorted(values)} for field, values in adapter.measures[name].where],
+                "denominator": "section shipments within each group" if adapter.measures[name].agg == "rate"
+                    else "all section shipments" if adapter.measures[name].agg == "share"
+                    else "valid metric values within group" if adapter.measures[name].agg == "avg" else None}
+                for name in dict.fromkeys(m for s in self.sections for m in s.metrics)},
+            "intent": self.intent,
         }
 
 

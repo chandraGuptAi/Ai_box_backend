@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator, model_serializer
+
+from app.report_visibility import customer_report
 
 from app.config import settings
 
@@ -87,6 +89,40 @@ Priority = Annotated[
 
 # --- Request ----------------------------------------------------------------
 
+class ReportFilters(BaseModel):
+    """Filters the user selected in the UI. The source query must have used exactly these."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    date_field: str = Field(
+        default="order_date", pattern=r"^[a-z][a-z_]{1,39}$",
+        description="payload mode: order_date, pickup_date, delivery_date or manifest_datetime. "
+                    "shipment_api mode: one of SHIPMENT_API_DATE_FIELDS (default manifest_datetime).",
+    )
+    from_date: date | None = None
+    to_date: date | None = None
+    range_days: int | None = Field(default=None, ge=1, le=3660,
+        description="Last N local calendar days, including today. Overrides stale explicit dates when supplied.")
+    date_range: Text | None = Field(default=None, max_length=60,
+        description="UI preset, e.g. 'Last 60 Days' or 'last_60_days'; use 'custom' with explicit dates.")
+    status: Text | None = Field(default=None, max_length=60, description="Selected status label; empty or 'All' for all.")
+    timezone: str = Field(default="Asia/Kolkata", max_length=60, description="IANA zone of the selected calendar days.")
+
+    @model_validator(mode="after")
+    def _ordered(self) -> ReportFilters:
+        from app.report_period import last_days_period, preset_days
+        days = preset_days(self.date_range)
+        if days is not None and self.range_days is not None and days != self.range_days:
+            raise ValueError("date_range and range_days must describe the same number of days")
+        days = self.range_days if self.range_days is not None else days
+        if days is not None:
+            self.from_date, self.to_date = last_days_period(days, self.timezone)
+            self.range_days = days
+        if self.from_date and self.to_date and self.from_date > self.to_date:
+            raise ValueError("from_date must not be after to_date")
+        return self
+
+
 class ReportRequest(BaseModel):
     """Payload sent by Angular to generate a report."""
 
@@ -111,14 +147,22 @@ class ReportRequest(BaseModel):
     )
 
     report_type: ReportType = Field(..., description="Report type key, e.g. 'shipment'. See GET /api/reports/types.")
+    source: Literal["payload", "shipment_api"] = Field(
+        default="payload",
+        description="payload: records are sent in `data`. shipment_api: the backend fetches every shipment matching "
+                    "`filters` from the shipment API with the caller's delegated credential; `data` and "
+                    "`expected_records` must be omitted.",
+    )
     prompt: Text = Field(
         default="",
         max_length=settings.max_prompt_chars,
         description="Optional user instructions that steer the focus of the analysis.",
     )
-    data: dict[str, Any] = Field(
-        ...,
-        description="Source data. For shipment reports, orders are read from data.getOrderList.",
+    date_range: Text | None = Field(default=None, max_length=60,
+        description="Compatibility UI preset; prefer filters.range_days or filters.date_range.")
+    data: dict[str, Any] | None = Field(
+        default=None,
+        description="payload mode only (required there). For shipment reports, orders are read from data.getOrderList.",
     )
     previous_report: dict[str, Any] | None = Field(
         default=None,
@@ -126,6 +170,57 @@ class ReportRequest(BaseModel):
     )
     company_name: Text | None = Field(default=None, max_length=200, description="Logged-in seller's company or user name.")
     customer_id: Text | None = Field(default=None, max_length=100, description="Customer or account identifier.")
+    filters: ReportFilters | None = Field(
+        default=None,
+        description="Selected date range and status. Defaults to data.report_filter when omitted.",
+    )
+    expected_records: int | None = Field(
+        default=None, ge=0,
+        description="Records the source matched for the filters. Defaults to the paginated list's total.",
+    )
+    allow_partial: bool = Field(
+        default=False,
+        description="Build a report labelled partial instead of failing when records are missing or out of scope.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _ui_date_preset(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        # Accept both the top-level UI label and the older payload report_filter form.
+        data = value.get("data")
+        container = data.get("data", data) if isinstance(data, dict) else {}
+        legacy = container.get("report_filter", {}) if isinstance(container, dict) else {}
+        legacy = legacy if isinstance(legacy, dict) else {}
+        explicit = value.get("filters")
+        if explicit is not None and not isinstance(explicit, dict):
+            return value
+        top_label = value.get("date_range")
+        legacy_preset = explicit is None and (legacy.get("range_days") is not None or legacy.get("date_range"))
+        if top_label is None and not legacy_preset:
+            return value
+        filters = dict(explicit or {k: legacy[k] for k in ReportFilters.model_fields if k in legacy})
+        if not explicit and "status" not in filters and legacy.get("status_label"):
+            filters["status"] = legacy["status_label"]
+        if top_label is not None:
+            filters["date_range"] = top_label
+        return {**value, "filters": filters}
+
+    @model_validator(mode="after")
+    def _one_source(self) -> ReportRequest:
+        if self.source == "payload":
+            if self.data is None:
+                raise ValueError("data is required when source is 'payload'")
+            return self
+        if self.data is not None or self.expected_records is not None:
+            raise ValueError("data and expected_records are not accepted when source is 'shipment_api'; "
+                             "the backend fetches the records and their matching total")
+        if self.report_type != "shipment":
+            raise ValueError("source 'shipment_api' supports report_type 'shipment' only")
+        if self.filters is None or self.filters.from_date is None or self.filters.to_date is None:
+            raise ValueError("filters.from_date and filters.to_date are required when source is 'shipment_api'")
+        return self
 
 
 # --- AI generated content ---------------------------------------------------
@@ -156,7 +251,7 @@ class ReportContent(BaseModel):
 
     title: Text = Field(..., min_length=1, max_length=200)
     executive_summary: Text = Field(..., min_length=1, max_length=6000)
-    sections: Annotated[list[ReportSection], _limit_list(12)] = Field(default_factory=list)
+    sections: Annotated[list[ReportSection], _limit_list(50)] = Field(default_factory=list)
     findings: Annotated[list[ReportFinding], _limit_list(20)] = Field(default_factory=list)
     recommendations: Annotated[list[ReportRecommendation], _limit_list(15)] = Field(default_factory=list)
     data_limitations: Annotated[list[Annotated[Text, Field(min_length=1, max_length=1000)]], _limit_list(15)] = Field(
@@ -234,6 +329,19 @@ class ReportDocument(BaseModel):
     disclaimer: Text = Field(default=DEFAULT_DISCLAIMER, max_length=1500)
     company_name: Text | None = Field(default=None, max_length=200)
     customer_id: Text | None = Field(default=None, max_length=100)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _hide_internal_issues(cls, value: Any) -> Any:
+        return customer_report(value)
+
+    @model_serializer(mode="wrap")
+    def _customer_output(self, handler):
+        # Services attach insights after construction; filter again at the output boundary.
+        return customer_report(handler(self))
+
+    validation_token: str | None = Field(default=None, max_length=4096,
+                                        description="Opaque validated-revision receipt; preserve for exports.")
 
 
 class ReportResponse(ReportDocument):
@@ -464,5 +572,27 @@ class StructuredReport(StrictModel):
     plan: dict[str, Any] | None = None
     verification: dict[str, Any] | None = None
 
+
+class ValidatePromptRequest(StrictModel):
+    prompt: Text = Field(..., min_length=1, max_length=2000, description="User prompt to validate")
+    report_type: Text = Field(default="shipment_analysis", max_length=100)
+    date_range: Text | None = Field(default=None, max_length=100)
+    current_report_id: Text | None = Field(default=None, max_length=100)
+
+
+class ValidatePromptResponse(StrictModel):
+    is_valid: bool = True
+    needs_improvement: bool = False
+    detected_language: Text = "english"
+    detected_intent: Text = "create_report"
+    suggested_prompt: Text | None = None
+    reason: Text | None = None
+    missing_fields: list[Text] = Field(default_factory=list)
+    requires_clarification: bool = False
+
+
 ReportDocument.model_rebuild()
 ReportResponse.model_rebuild()
+ValidatePromptRequest.model_rebuild()
+ValidatePromptResponse.model_rebuild()
+

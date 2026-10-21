@@ -71,11 +71,205 @@ Behaviour:
   answerable requests return the report with `Not available: ...` limitations.
 - Narrative sentences claiming that data is unavailable when the scoped records contain it (e.g. "No cancellation
   reasons are available") are removed, and `generation.notice` says so.
-- `previous_report` content is merged only when it was built from the same records (`data_fingerprint`) and the same
-  `customer_id`; otherwise the new report stands alone and `generation.notice` explains why.
-- `REPORT_AI_PLANNER=true` (default false) allows one extra, small DeepSeek call when the rules cannot read a condition
-  the user stated; its JSON plan is validated against the same field/operator/value vocabulary. No code or query from
+- Dynamic generation uses only the current approved plan. `previous_report` supplies follow-up identifiers,
+  never stale tables or sections. The legacy rule-based mode retains its fingerprint/customer merge checks.
+- `REPORT_AI_PLANNER=true` (default) enables a typed planning call before metrics and a grounded narrative call after deterministic computation
+  of the requested sections. Its JSON plan is validated against the same field/operator/value vocabulary. No code or query from
   DeepSeek is ever executed.
+
+## Dynamic shipment execution plan
+
+With `REPORT_AI_PLANNER=true` (default), the first call interprets the exact prompt using registered
+schema/capability metadata and protected UI/account scope, before source access. English, Hindi and
+Hinglish prompts follow the same workflow. The typed plan uses arbitrary section IDs/titles and ordered
+combinations of registered dimensions, metrics, filters, ranking and visuals; no example-specific section
+list is enforced. Unknown operations/code/SQL are rejected. Invalid plans return a safe error; materially
+ambiguous intent or source-scope conflicts return `clarification_required` before upstream requests.
+
+`AnalysisPlan.sections` contains `ExecutionSection` objects with requirement IDs. Global cohort filters
+apply to every section; section filters isolate subsets without shrinking other sections' denominators.
+Prompt filters remain local, while the backend fetches the complete UI-authorized source scope using the
+existing totalRecords/dynamic-perPage/pagination safeguards and delegated credential handling.
+
+Python calculates only the planned metrics. Missing required fields yield explicit unavailable results
+or clarification; zero section subsets remain explicit; an empty overall dataset produces
+`no_matching_records` without report generation. Decimal arithmetic and documented denominators govern
+money, averages and rates. Verified metrics feed the second DeepSeek call for grounded narrative, with
+factual fallback preserving exactly the approved sections. Existing structured report JSON is retained.
+
+Final coverage independently checks requirement IDs, dimensions, rankings, metric references, KPI values,
+chart datasets, section order and export-table parity. Essential coverage failures block delivery even in
+general accuracy audit-only mode. Angular renders the returned sections; PDF/Word use the validated revision.
+`REPORT_AI_PLANNER=false` explicitly selects the previous rule-based compatibility behavior.
+
+## Source completeness gate (shipment reports)
+
+Runs after the metadata-only execution plan is accepted, before any metric, chart or narrative call
+(`app/analysis/completeness.py`). Ambiguity and invalid plans stop before fetching shipments.
+
+- Optional request fields: `filters` (`date_field`, `from_date`, `to_date`, `status`, `timezone`, default
+  `Asia/Kolkata`), `expected_records` and `allow_partial` (default false). Without `filters`, `data.report_filter` is
+  used. Without `expected_records`, the paginated list's `total` is used.
+- Rows are identified by order ID + AWB. Identical repeated rows (overlapping pages) are removed. A shipment that
+  arrives again with different values is never counted twice: the request stops with `conflicting_records`, or, with
+  `allow_partial`, the first version is used and a limitation says so.
+- The record dates are checked in the selected timezone. A timestamp with no timezone offset that could fall on either
+  side of a day boundary is counted as `ambiguous_records`, not guessed. Statuses are checked when the selected label
+  maps to a known status category.
+- `completeness.filters` separates `applied_at_source` (the backend sent the filter) from each filter's
+  `verification`: `verified`, `partially_verified`, `not_verifiable` (the records do not carry the field) or
+  `not_selected`. `scope_verification` summarises both filters. A date filter is checked only against its own field.
+- HTTP 422 `conflicting_records`: the same shipment arrived with different values.
+- HTTP 422 `incomplete_source`: fewer unique rows than the source matched (e.g. only page 1 of 143).
+- HTTP 422 `scope_mismatch`: received rows fall outside the selected period or status (the source ignored a filter).
+- HTTP 422 `no_matching_records`: nothing is left in scope.
+- HTTP 422 `clarification_required`: the prompt's period or status contradicts the selection.
+  `details.conflict` is `period` or `status`, and `details.options` lists the choices. The selection is never
+  silently replaced.
+- `allow_partial: true` builds the report anyway. Out-of-scope rows are excluded and the report is labelled
+  `Partial report: X of Y ...`.
+- `REPORT_REQUIRE_COMPLETE_SOURCE=false` disables the two stop conditions for every request.
+- Coverage is audit data, not report content. The completeness record (expected, fetched, unique, duplicate,
+  conflicting, out-of-scope and analysed counts, selected filters, filter verification, `data_as_of`) and its notes
+  are written to the backend audit log (below) and are **not** returned in the report or shown in exports. Only a
+  partial report (`allow_partial`) keeps its `Partial report: X of Y` limitation so it never reads as complete.
+  DeepSeek still receives the selected filters and counts; for a single-status cohort it is told not to state
+  account-wide delivery, RTO or cancellation rates.
+- Coverage audit log: `output/report_coverage_audit.jsonl` (rotating, 5 MB x 5 files, never served over HTTP, git-
+  ignored). One JSON line per shipment report attempt:
+  `{"event": "report_coverage", "at", "request_id", "report_id", "user_id", "report_type", "source", "outcome",
+  "completeness", "notes", "details"}`. `outcome` is `generated` or the error code that stopped the fetch or gate
+  (`details` then holds the error details). No credential, prompt text or shipment row is written. Find a user's
+  failed request by the `request_id` shown in the error response.
+- Export filenames are `Bigship_<Seller>_<ReportName>_<YYYY-MM-DD>.<ext>` (ASCII letters, digits and hyphens; dated in
+  IST).
+
+## Backend-owned shipment fetch (`source: "shipment_api"`)
+
+The browser sends the prompt and the selected filters. The backend loads every matching shipment from the order-list
+API (`app/services/shipment_source.py`), runs the completeness gate and the normal report pipeline, and returns the
+same `ReportResponse`. `source: "payload"` (the default, records in `data`) is unchanged.
+
+Request:
+
+```http
+POST /api/reports/generate
+X-User-Id: admin:123                          (AI Box login, set by the identity interceptor)
+X-Shipment-Authorization: Bearer <BigShip login token>
+```
+
+```json
+{
+  "report_type": "shipment",
+  "source": "shipment_api",
+  "prompt": "Show shipment status counts and percentages with graphs",
+  "filters": {"date_field": "manifest_datetime", "from_date": "2026-10-01", "to_date": "2026-10-12",
+              "status": "Delivered", "timezone": "Asia/Kolkata"},
+  "previous_report": null
+}
+```
+
+Shared header contract (delegated BigShip authentication, separate from AI Box's own `X-User-Id` login):
+
+- Angular → FastAPI: `X-Shipment-Authorization: Bearer <BigShip login token>` (the same `localStorage.token` the
+  BigShip interceptor sends). The scheme is case-insensitive.
+- FastAPI → `POST {SHIPMENT_API_BASE_URL}/api/get-order-list`: `Authorization: Bearer <same token>` on the count
+  request, the full-data request, every page of the clamped-page fallback and every retry.
+- The token is opaque (JWT, Sanctum `id|secret`, or anything else): any visible ASCII without spaces, at most 8192
+  characters. It is passed per request, never set as an HTTP-client default, never logged, stored in reports, put in
+  error details or sent to DeepSeek. Redirects are not followed, so it never reaches another host.
+- Missing header → 401 `shipment_auth_required`; not `Bearer <token>` (other scheme, spaces, `null`/`undefined`)
+  → 401 `shipment_auth_invalid`. Both fail before any upstream call.
+- Upstream 401 (or in-body `status_code: 401`) → 401 `upstream_auth_failed`: the session expired or was rejected,
+  log in again. Upstream 403 → 403 `upstream_forbidden`: the session is valid but not allowed these shipments.
+- CORS allows every request header (`allow_headers=["*"]`), so preflight accepts `X-Shipment-Authorization`
+  together with `X-User-Id`/`X-User-Name`. A reverse proxy must forward the header unchanged (nginx does by default;
+  its name has no underscore) and must not demand its own authentication on `OPTIONS` preflight requests.
+
+`data` and `expected_records` are rejected in this mode (422). `filters.from_date`/`to_date` are required. `status` is
+an Angular status label (`All Statuses`, `Pickup Scheduled`, `Not Picked`, `In-Transit`, `Out For Delivery`,
+`Delivered`, `Undelivered`, `RTO Intransit`, `RTO Delivered`, `Cancelled`, `Lost`). `date_field` must be listed in
+`SHIPMENT_API_DATE_FIELDS`. Ranges are limited to `SHIPMENT_API_MAX_RANGE_DAYS` and cannot end in the future.
+
+Upstream calls, all with identical filters and the caller's token:
+
+1. `page=1, perPage=SHIPMENT_API_COUNT_PAGE_SIZE` → `data.totalRecords` (never `data.total` or the status counters).
+   0 → `no_matching_records`; more than `SHIPMENT_API_MAX_RECORDS` → `source_too_large`.
+2. `page=1, perPage=totalRecords` (at most `SHIPMENT_API_MAX_PAGE_SIZE`). If fewer rows arrive, the server clamps the
+   page size: the fetch restarts with the observed size and reads every page. Empty pages, a repeated page, a page of
+   already-loaded shipments, rows shifting between pages, or a changing `totalRecords` stop the attempt; the whole
+   fetch is retried `SHIPMENT_API_FETCH_ATTEMPTS` times, then fails. Rows are never truncated.
+
+Request mapping (from the existing Angular integration): `type` = status code; `fromDate`/`toDate` = local midnight
+of `from_date` and of the day after `to_date` (exclusive end), in UTC as `YYYY-MM-DD HH:MM:SS`; `date_filter_type` =
+`date_field`; `only_order_stats` = 0; `segment_type` = `SHIPMENT_API_SEGMENT_TYPE`; every search field empty.
+
+Success: the normal report. The coverage audit record's `completeness` adds `source: "shipment_api"`, `fetched_at`,
+`upstream_requests`, `page_size`, `pages`, `fetch_attempts`, `page_size_clamped`, `upstream_query`,
+`source_snapshot: null` (the API offers none), `data_as_of: null` and `reference_date` (today, used for ages):
+
+```json
+{"status": "complete", "expected_records": 272, "fetched_records": 272, "unique_records": 272,
+ "duplicate_records_removed": 0, "conflicting_duplicates": 0, "outside_selected_period": 0,
+ "outside_selected_status": 0, "analyzed_records": 272, "scope_verification": "partially_verified",
+ "filters": {"applied_at_source": true,
+             "date": {"field": "manifest_datetime", "verification": "not_verifiable", "missing_field_records": 272},
+             "status": {"label": "Delivered", "verification": "verified", "checked_records": 272}},
+ "source": "shipment_api", "fetched_at": "2026-10-21T06:12:03+00:00", "source_snapshot": null}
+```
+
+Every error has the standard envelope plus `retryable` and `request_id` (also the `X-Request-Id` response header):
+
+```json
+{"error": {"code": "incomplete_source", "category": "validation",
+           "message": "Received 270 of 272 matching shipments. Please retry.",
+           "details": {"expected_records": 272, "fetched_records": 270}, "retryable": true,
+           "request_id": "5f0c2e8b9a7d4c1e8f3b2a6d0c9e7f14"}}
+```
+
+| HTTP | code | retryable | when |
+|---|---|---|---|
+| 401 | `ai_box_auth_required` | no | no AI Box login (`X-User-Id`) |
+| 401 | `shipment_auth_required` | no | no `X-Shipment-Authorization` |
+| 401 | `shipment_auth_invalid` | no | `X-Shipment-Authorization` is not `Bearer <token>` |
+| 401 | `upstream_auth_failed` | no | the shipment API rejected the token (HTTP or in-body 401) |
+| 403 | `upstream_forbidden` | no | the shipment API refused access |
+| 422 | `request_validation_error` | no | malformed body, `data` in this mode, `from_date` after `to_date` |
+| 422 | `unsupported_filter` | no | unknown status/date field/timezone, future dates, range too long |
+| 422 | `no_matching_records` | no | `totalRecords` is 0, or nothing in scope |
+| 422 | `source_too_large` | no | too many records, pages or response bytes |
+| 422 | `clarification_required` | no | the prompt's period/status contradicts the selection |
+| 429 | `upstream_rate_limited` | yes | upstream 429 (`Retry-After` passed on) |
+| 409 | `source_changed` | yes | total changed or rows shifted during the fetch |
+| 502 | `incomplete_source` | yes | fewer rows than `totalRecords` |
+| 502 | `conflicting_records` | yes | one shipment returned with different values |
+| 502 | `scope_mismatch` | no | returned rows outside the selected period/status (checked fields only) |
+| 502 | `upstream_pagination_inconsistent` | yes | empty, repeated or wrong-size pages |
+| 502 | `upstream_unavailable` | yes | network failure or 5xx (retried once first) |
+| 502 | `upstream_rejected` | no | other 4xx, or `success: false` |
+| 502 | `upstream_invalid_response` | no | not JSON, or missing/invalid `getOrderList`/`totalRecords` |
+| 503 | `shipment_source_not_configured` | no | `SHIPMENT_API_BASE_URL` empty or not an https origin |
+| 504 | `upstream_timeout` | yes | the shipment API exceeded its timeouts |
+| 504 | `report_deadline_exceeded` | yes | the whole request exceeded `REPORT_DEADLINE_SECONDS` |
+| 502/503/504 | `ai_*` | per code | DeepSeek failures (unchanged) |
+| 502 | `ai_invalid_structure`, `ai_unverified_numbers` | no | final report validation failed (unchanged) |
+
+No DeepSeek call is made before the fetch and completeness gate succeed. Upstream bodies, tokens and request headers
+are never logged or returned; logs carry page numbers, counts, durations and the request ID.
+
+Open contract gaps (not guessed):
+
+- The returned rows carry no `manifest_datetime`, so that filter is `applied_at_source` but `not_verifiable`, and the
+  report says so. The API's default date field (no `date_filter_type`) is undocumented and therefore not selectable.
+- Supported `date_filter_type` values, `segment_type` values and `only_order_stats` behaviour are undocumented.
+- Whether `toDate` is exclusive comes from the existing Angular comment, not API documentation.
+- Timestamps without an offset are not assumed to be IST or UTC; near midnight they are counted as ambiguous.
+- No snapshot or stable sort key is offered: consistency is checked by an unchanged `totalRecords` and
+  non-overlapping pages, which cannot prove a concurrent change that keeps the total constant.
+- Seller scope is enforced by the shipment API from the delegated token (the same authorization the browser had).
+  AI Box's `X-User-Id` is not verified against that token.
+- The fetch is synchronous inside the request (bounded by `REPORT_DEADLINE_SECONDS`); there is no job queue, so
+  reports above `SHIPMENT_API_MAX_RECORDS` need a narrower range until a worker exists.
 
 ## Calculations and scope
 

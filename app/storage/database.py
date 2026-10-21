@@ -59,6 +59,7 @@ class ReportStorage:
         );
         CREATE INDEX IF NOT EXISTS idx_saved_reports_created ON saved_reports(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_saved_reports_type ON saved_reports(report_type);
+        CREATE INDEX IF NOT EXISTS idx_saved_reports_owner ON saved_reports(created_by_id, created_at DESC);
         """
         with self._connection() as conn:
             conn.execute(table_sql)
@@ -73,12 +74,23 @@ class ReportStorage:
         prompt: str,
         records_analyzed: int,
         report_data: dict[str, Any],
+        *,
+        created_by_id: str,
+        created_by_name: str,
         pdf_bytes: bytes | None = None,
         docx_bytes: bytes | None = None,
-        created_by_id: str = "user",
-        created_by_name: str = "User",
-    ) -> dict[str, Any]:
-        """Save or update a generated report in the database and write files to disk."""
+    ) -> dict[str, Any] | None:
+        """Save or update a generated report in the database and write files to disk.
+
+        Returns None when the ID already belongs to another user; their report is left untouched.
+        """
+        with self._connection() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT created_by_id FROM saved_reports WHERE id = %s", (report_id,))
+            existing = cur.fetchone()
+        if existing and existing["created_by_id"] != created_by_id:
+            return None
+
         _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         pdf_path = ""
         docx_path = ""
@@ -112,7 +124,8 @@ class ReportStorage:
             pdf_path = CASE WHEN excluded.pdf_path != '' THEN excluded.pdf_path ELSE saved_reports.pdf_path END,
             docx_path = CASE WHEN excluded.docx_path != '' THEN excluded.docx_path ELSE saved_reports.docx_path END,
             pdf_blob = CASE WHEN excluded.pdf_blob IS NOT NULL THEN excluded.pdf_blob ELSE saved_reports.pdf_blob END,
-            docx_blob = CASE WHEN excluded.docx_blob IS NOT NULL THEN excluded.docx_blob ELSE saved_reports.docx_blob END;
+            docx_blob = CASE WHEN excluded.docx_blob IS NOT NULL THEN excluded.docx_blob ELSE saved_reports.docx_blob END
+        WHERE saved_reports.created_by_id = excluded.created_by_id;
         """
 
         with self._connection() as conn:
@@ -136,32 +149,29 @@ class ReportStorage:
                     docx_bytes,
                 ),
             )
+            if cur.rowcount == 0:
+                return None
 
-        return self.get_report(report_id) or {
-            "id": report_id,
-            "name": name,
-            "description": description,
-            "report_type": report_type,
-            "created_at": now_iso,
-        }
+        return self.get_report(report_id, owner_id=created_by_id)
 
-    def get_report(self, report_id: str) -> dict[str, Any] | None:
-        """Retrieve a saved report by ID with full parsed JSON."""
-        sql = "SELECT * FROM saved_reports WHERE id = %s"
+    def get_report(self, report_id: str, *, owner_id: str) -> dict[str, Any] | None:
+        """Retrieve one of the owner's saved reports by ID with full parsed JSON."""
+        sql = "SELECT * FROM saved_reports WHERE id = %s AND created_by_id = %s"
         with self._connection() as conn:
             cur = conn.cursor()
-            cur.execute(sql, (report_id,))
+            cur.execute(sql, (report_id, owner_id))
             row = cur.fetchone()
             if not row:
                 return None
             return self._row_to_dict(row)
 
-    def get_file_content(self, report_id: str, file_type: str = "pdf") -> tuple[bytes | None, str]:
-        """Retrieve the binary content of a stored PDF or DOCX file."""
-        sql = "SELECT name, pdf_path, docx_path, pdf_blob, docx_blob FROM saved_reports WHERE id = %s"
+    def get_file_content(self, report_id: str, file_type: str = "pdf", *, owner_id: str) -> tuple[bytes | None, str]:
+        """Retrieve the binary content of one of the owner's stored PDF or DOCX files."""
+        sql = ("SELECT name, pdf_path, docx_path, pdf_blob, docx_blob FROM saved_reports "
+               "WHERE id = %s AND created_by_id = %s")
         with self._connection() as conn:
             cur = conn.cursor()
-            cur.execute(sql, (report_id,))
+            cur.execute(sql, (report_id, owner_id))
             row = cur.fetchone()
             if not row:
                 return None, ""
@@ -186,8 +196,9 @@ class ReportStorage:
 
             return None, filename
 
-    def update_report(self, report_id: str, name: str | None = None, description: str | None = None) -> dict[str, Any] | None:
-        """Update report title/name or description."""
+    def update_report(self, report_id: str, name: str | None = None, description: str | None = None,
+                      *, owner_id: str) -> dict[str, Any] | None:
+        """Update the title/name or description of one of the owner's reports."""
         updates = []
         params = []
         if name is not None:
@@ -197,48 +208,49 @@ class ReportStorage:
             updates.append("description = %s")
             params.append(description.strip())
         if not updates:
-            return self.get_report(report_id)
+            return self.get_report(report_id, owner_id=owner_id)
 
-        params.append(report_id)
-        sql = f"UPDATE saved_reports SET {', '.join(updates)} WHERE id = %s"
+        params.extend([report_id, owner_id])
+        sql = f"UPDATE saved_reports SET {', '.join(updates)} WHERE id = %s AND created_by_id = %s"
         with self._connection() as conn:
             cur = conn.cursor()
             cur.execute(sql, params)
-        return self.get_report(report_id)
+        return self.get_report(report_id, owner_id=owner_id)
 
-    def delete_report(self, report_id: str) -> bool:
-        """Delete a report record and cleanup any disk files."""
-        # Check files to remove
-        record = self.get_report(report_id)
-        if record:
-            for p in (record.get("pdf_path"), record.get("docx_path")):
-                if p and os.path.exists(p):
-                    try:
-                        os.remove(p)
-                    except Exception:
-                        pass
+    def delete_report(self, report_id: str, *, owner_id: str) -> bool:
+        """Delete one of the owner's report records and cleanup any disk files."""
+        record = self.get_report(report_id, owner_id=owner_id)
+        if not record:
+            return False
+        for p in (record.get("pdf_path"), record.get("docx_path")):
+            if p and os.path.exists(p):
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
 
-        sql = "DELETE FROM saved_reports WHERE id = %s"
+        sql = "DELETE FROM saved_reports WHERE id = %s AND created_by_id = %s"
         with self._connection() as conn:
             cur = conn.cursor()
-            cur.execute(sql, (report_id,))
+            cur.execute(sql, (report_id, owner_id))
             return cur.rowcount > 0
 
     def list_reports(
         self,
         search: str = "",
         report_type: str = "",
-        created_by: str = "",
         page: int = 1,
         page_size: int = 10,
+        *,
+        owner_id: str,
     ) -> dict[str, Any]:
-        """List reports with search, filtering, and pagination."""
+        """List the owner's reports with search, filtering, and pagination."""
         page = max(1, page)
         page_size = max(1, min(page_size, 100))
         offset = (page - 1) * page_size
 
-        where_clauses = []
-        params = []
+        where_clauses = ["created_by_id = %s"]
+        params: list[Any] = [owner_id]
 
         if search:
             where_clauses.append("(LOWER(name) LIKE %s OR LOWER(description) LIKE %s OR LOWER(prompt) LIKE %s)")
@@ -250,11 +262,7 @@ class ReportStorage:
             norm_type = f"%{report_type.lower().replace('-', '').replace('_', '')}%"
             params.append(norm_type)
 
-        if created_by:
-            where_clauses.append("created_by_id = %s")
-            params.append(created_by)
-
-        where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        where_sql = f"WHERE {' AND '.join(where_clauses)}"
 
         count_sql = f"SELECT COUNT(*) as total FROM saved_reports {where_sql}"
         select_sql = f"""
@@ -280,8 +288,8 @@ class ReportStorage:
             "pageSize": page_size,
         }
 
-    def get_analytics_overview(self) -> dict[str, Any]:
-        """Compute real-time dashboard analytics across saved reports."""
+    def get_analytics_overview(self, *, owner_id: str) -> dict[str, Any]:
+        """Compute real-time dashboard analytics across the owner's saved reports."""
         now = datetime.now(timezone.utc)
         curr_month = now.strftime("%Y-%m")
         # Previous month
@@ -293,18 +301,21 @@ class ReportStorage:
             cur = conn.cursor()
 
             # 1. Total reports
-            cur.execute("SELECT COUNT(*) as total, COALESCE(SUM(records_analyzed), 0) as total_records FROM saved_reports")
+            cur.execute("SELECT COUNT(*) as total, COALESCE(SUM(records_analyzed), 0) as total_records "
+                        "FROM saved_reports WHERE created_by_id = %s", (owner_id,))
             row_total = cur.fetchone()
             total_reports = row_total["total"] if row_total else 0
             total_records = row_total["total_records"] if row_total else 0
 
             # 2. Reports this month
-            cur.execute("SELECT COUNT(*) as this_month FROM saved_reports WHERE created_at LIKE %s", (f"{curr_month}%",))
+            cur.execute("SELECT COUNT(*) as this_month FROM saved_reports WHERE created_by_id = %s AND created_at LIKE %s",
+                        (owner_id, f"{curr_month}%"))
             row_curr = cur.fetchone()
             reports_this_month = row_curr["this_month"] if row_curr else 0
 
             # 3. Reports last month
-            cur.execute("SELECT COUNT(*) as last_month FROM saved_reports WHERE created_at LIKE %s", (f"{prev_month}%",))
+            cur.execute("SELECT COUNT(*) as last_month FROM saved_reports WHERE created_by_id = %s AND created_at LIKE %s",
+                        (owner_id, f"{prev_month}%"))
             row_prev = cur.fetchone()
             reports_last_month = row_prev["last_month"] if row_prev else 0
 
@@ -316,7 +327,8 @@ class ReportStorage:
                 monthly_change_pct = 100.0
 
             # 4. Last report
-            cur.execute("SELECT id, name, created_at FROM saved_reports ORDER BY created_at DESC LIMIT 1")
+            cur.execute("SELECT id, name, created_at FROM saved_reports WHERE created_by_id = %s "
+                        "ORDER BY created_at DESC LIMIT 1", (owner_id,))
             row_last = cur.fetchone()
             last_report = None
             if row_last:
@@ -327,7 +339,8 @@ class ReportStorage:
                 }
 
             # 5. Recent reports (formatted for Angular SavedReport / ReportsOverview)
-            cur.execute("SELECT * FROM saved_reports ORDER BY created_at DESC LIMIT 5")
+            cur.execute("SELECT * FROM saved_reports WHERE created_by_id = %s ORDER BY created_at DESC LIMIT 5",
+                        (owner_id,))
             recent_rows = cur.fetchall()
             recent_reports = [self._to_angular_saved_report(self._row_to_dict(r)) for r in recent_rows]
 

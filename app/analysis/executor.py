@@ -16,6 +16,12 @@ from app.models.report_schema import ReportTable, TableColumn
 MISSING = "—"
 
 
+def execute_ordered_sections(plan: AnalysisPlan, rows):
+    """Execute the same validated AnalysisPlan's ordered coverage obligations."""
+    from app.analysis.section_reports import execute_registered_section
+    return [execute_registered_section(spec, rows) for spec in plan.sections]
+
+
 # --- Filtering -----------------------------------------------------------------------
 
 def _matches(value: Any, f: Filter) -> bool:

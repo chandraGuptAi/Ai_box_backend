@@ -9,6 +9,8 @@ email address or phone number before they can reach the AI model.
 from __future__ import annotations
 
 import math
+import hashlib
+import json
 import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable
@@ -17,7 +19,7 @@ from datetime import date, datetime, timezone
 from typing import Any
 
 from app.config import settings
-from app.errors import InvalidReportDataError
+from app.errors import InvalidReportDataError, NoMatchingRecordsError
 from app.models.report_schema import KeyMetric, ReportTable
 from app.prompts.base import AnalysisResult, ReportDefinition
 from app.services.report_evidence import derived_percentages
@@ -94,12 +96,12 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
         "cancellationremark", "cancellationremarks", "cancelremark", "cancelremarks", "ordercancelremark",
     ),
     "destination_state": (
-        "state", "deliverystate", "consigneestate", "shippingstate", "destinationstate", "customerstate",
+        "consigneestate", "destinationstate", "deliverystate", "shippingstate", "customerstate", "state",
         "dropstate", "consigneeaddressstate", "deliveryaddressstate", "shippingaddressstate",
         "customeraddressstate", "consigneedetailsstate", "customerdetailsstate",
     ),
     "destination_city": (
-        "city", "deliverycity", "consigneecity", "shippingcity", "destinationcity", "customercity",
+        "consigneecity", "destinationcity", "deliverycity", "shippingcity", "customercity", "city",
         "dropcity", "consigneeaddresscity", "deliveryaddresscity", "shippingaddresscity",
         "customeraddresscity", "consigneedetailscity", "customerdetailscity",
     ),
@@ -115,8 +117,11 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     # Separate measures: never substituted for one another.
     "charge": ("totalcharge", "shippingcharge", "shippingcharges", "freightcharge", "freightcharges"),
     "collectable_amount": ("collectableamount", "collectablevalue", "codamount", "codcollectableamount"),
-    "pickup_date": ("pickupdate", "pickeddate", "pickedupdate", "pickupdatetime", "pickupdoneat"),
-    "delivery_date": ("deliverydate", "delivereddate", "deliveredat", "deliverydatetime", "deliveredon"),
+    "pickup_date": ("domestictransitstatsdatepickup", "pickupdate", "pickeddate", "pickedupdate", "pickupdatetime", "pickupdoneat"),
+    "delivery_date": ("domestictransitstatsdatedelivery", "deliverydate", "delivereddate", "deliveredat", "deliverydatetime", "deliveredon"),
+    "courier_remarks": ("domestictransitstatscourierremarks", "courierremarks", "courierremark"),
+    "rto_reason": ("rtoreason", "returnreason", "reasonforrto", "reasonforreturn"),
+    "destination_pincode": ("consigneepincode", "consigneepostalcode", "consigneezipcode", "destinationpincode", "deliverypincode", "pincode", "postalcode", "zipcode"),
     "weight": ("weightkg", "weight", "chargeableweight", "deadweight", "totalweight", "actualweight", "packageweight"),
     "order_id": ("orderid", "mastercustomorderid", "order_id", "customorderid", "id"),
     "awb_number": ("awbnumber", "awb_number", "awbno", "referencenumber", "reference_number", "lrnumber", "lr_number", "trackingnumber"),
@@ -195,7 +200,8 @@ def extract_orders(data: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(candidate, list):
         raise InvalidReportDataError("data.getOrderList must be a list of order objects.")
     if not candidate:
-        raise InvalidReportDataError("data.getOrderList contains no orders to analyse.")
+        raise NoMatchingRecordsError("No data available for the selected filters and analysis.",
+                                     details={"matching_records": 0})
     if len(candidate) > settings.max_records:
         raise InvalidReportDataError(
             f"Too many orders: {len(candidate)} supplied, the maximum is {settings.max_records}.",
@@ -348,7 +354,8 @@ STATUS_MAPPING = {
     **dict.fromkeys(("in transit", "out for delivery", "shipped", "dispatched", "picked up", "picked", "reached hub"), "in_transit"),
     **dict.fromkeys(("pending", "new", "booked", "pickup pending", "pickup scheduled", "not picked", "not picked up",
                      "not pickup", "unshipped", "manifested", "processing", "created", "ready to ship"), "pending"),
-    **dict.fromkeys(("rto", "rto initiated", "rto in transit", "rto delivered", "returned", "return to origin"), "rto"),
+    **dict.fromkeys(("rto", "rto pending", "rto initiated", "rto in transit", "rto intransit", "rto delivered", "returned",
+                     "return to origin"), "rto"),
     **dict.fromkeys(("ndr", "undelivered", "not delivered", "failed", "damaged", "exception", "delivery failed"), "exception"),
     **dict.fromkeys(("lost", "shipment lost", "lost in transit"), "lost"),
 }
@@ -365,6 +372,28 @@ def normalize_payment(value: str | None) -> str | None:
     if "prepaid" in text or "online" in text or text == "paid":
         return "Prepaid"
     return value
+
+
+def extended_shipment_fields(record: dict[str, Any]) -> dict[str, Any]:
+    """Opaque consignee keys keep personal names/addresses out of AI context and logs."""
+    flat = _flatten(record)
+    identifier = next((flat[k] for k in ("consigneecustomerid", "consigneebuyerid", "consigneeid", "buyerid")
+                       if flat.get(k) not in (None, "")), None)
+    name = next((flat[k] for k in ("consigneename", "consigneecustomername", "buyername")
+                 if flat.get(k) not in (None, "")), None)
+    pin = _lookup(flat, "destination_pincode")
+    pin = str(pin).strip() if pin is not None else None
+    pin = pin if pin and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 -]{1,11}", pin) else None
+    basis = "established consignee identifier" if identifier is not None else "approximate name/city/pincode grouping" if name else "unavailable"
+    key = ("id", str(identifier)) if identifier is not None else (
+        "approximate", str(name).casefold().strip(), str(_lookup(flat, "destination_city") or "").casefold(), pin) if name else None
+    buyer = ("Consignee " if identifier is not None else "Approx. consignee ") + hashlib.sha256(
+        json.dumps(key, ensure_ascii=True).encode()).hexdigest()[:12] if key else None
+    status = re.sub(r"[\s_-]+", " ", str(_lookup(flat, "status") or "").strip().casefold())
+    stage = "pending" if status in {"rto pending", "rto initiated", "rto in transit", "rto intransit"} else (
+        "completed" if status in {"rto delivered", "returned", "returned to origin"} else
+        "unknown" if categorize_status(status) == "rto" else "not_rto" if categorize_status(status) not in {"unknown", "other"} else None)
+    return {"buyer": buyer, "buyer_identity_basis": basis, "destination_pincode": pin, "rto_stage": stage}
 
 
 @dataclass

@@ -53,8 +53,9 @@ def payload(orders, *, total=None, account_total=None, as_of="2026-10-13", repor
     return {"data": inner}
 
 
-def generate(client, prompt, data, status=200):
-    response = client.post("/api/reports/generate", json={"report_type": "shipment", "prompt": prompt, "data": data})
+def generate(client, prompt, data, status=200, **extra):
+    response = client.post("/api/reports/generate", json={"report_type": "shipment", "prompt": prompt, "data": data,
+                                                          **extra})
     assert response.status_code == status, response.text
     if status == 200:
         ReportResponse.model_validate(response.json())
@@ -66,9 +67,9 @@ def table(report, title):
 
 
 def assert_verified(report):
-    verification = report["structured_report"]["verification"]
-    assert verification["failed_and_removed"] == [], verification
-    assert verification["status"] in ("passed", "passed_with_corrections")
+    from app.analysis.accuracy import verify_revision
+    assert "verification" not in report["structured_report"]
+    assert verify_revision(ReportResponse.model_validate(report))["report_id"] == report["report_id"]
 
 
 @pytest.fixture
@@ -127,7 +128,7 @@ def test_cancellation_reasons_from_the_api_are_used_and_absence_claims_removed(c
     assert table(report, "Top Cancellation Reasons")["rows"][0][:2] == ["Delay in pickup", "4"]
     text = json.dumps(s["executive_summary"]) + json.dumps(s["findings"])
     assert "No cancellation reasons" not in text and "not recorded" not in text
-    assert s["verification"]["status"] == "passed_with_corrections"
+    assert_verified(report)
     assert report["generation"]["notice"]
 
 
@@ -215,9 +216,9 @@ def test_courier_performance_for_last_month_uses_exactly_that_period(client, ai)
 def test_period_with_no_matching_records_is_stated_not_substituted(client, ai):
     ai.error = AssertionError("An empty scope needs no AI")
     orders = make_orders(10, day=lambda i: date(2026, 6, 10))
-    report = generate(client, "Courier performance for last month", payload(orders, as_of="2026-10-13"))
-    assert report["records_analyzed"] == 0
-    assert "No supplied shipment records match" in report["structured_report"]["executive_summary"]["paragraphs"][0]
+    result = generate(client, "Courier performance for last month", payload(orders, as_of="2026-10-13"), status=422)
+    assert result["error"]["code"] == "no_matching_records"
+    assert "No data available" in result["error"]["message"]
 
 
 # --- Missing data and partial responses ------------------------------------------------------
@@ -240,15 +241,19 @@ def test_answerable_request_lists_the_missing_part(client, ai):
     assert any(note.startswith("Not available: Zone") for note in report["structured_report"]["limitations"])
 
 
-def test_paginated_response_is_not_treated_as_complete(client, ai):
+def test_paginated_response_is_not_treated_as_complete(client, ai, coverage_audit):
     orders = make_orders(20)
     report = generate(client, "Shipment status overview", payload(orders, total=250, account_total=900,
-                                                                  report_filter={"from_date": "2026-09-01", "to_date": "2026-09-30"}))
+                                                                  report_filter={"from_date": "2026-09-01", "to_date": "2026-09-30"}),
+                      allow_partial=True)
     scope = report["structured_report"]["scope"]
     assert scope["records_supplied"] == 20 and scope["api_reported_total"] == 250 and scope["is_partial"] is True
     assert "250" in scope["statement"] and "partial" in scope["statement"]
     assert scope["api_filter"] == {"from_date": "2026-09-01", "to_date": "2026-09-30"}
     assert report["records_analyzed"] == 20
+    completeness = coverage_audit[-1]["completeness"]
+    assert completeness["status"] == "partial" and completeness["missing_records"] == 230
+    assert report["structured_report"]["limitations"][0].startswith("Partial report: 20 of 250")
 
 
 # --- Output shape follows the prompt -----------------------------------------------------------
@@ -270,8 +275,6 @@ def test_financial_report(client, ai):
     report = generate(client, "Financial report of shipping charges", payload(make_orders(16)))
     titles = {t["title"] for t in report["tables"]}
     assert {"Shipping Charges by Courier", "Shipping Charges by Payment Mode"} <= titles
-    assert any(c["check"] == "financial_totals" and c["status"] == "passed"
-               for c in report["structured_report"]["verification"]["checks"])
     assert_verified(report)
 
 
@@ -281,8 +284,7 @@ def test_multiple_charts_and_comparisons_are_verified(client, ai):
     report = generate(client, prompt, payload(make_orders(45, charge=lambda i: 75 + (i * 37) % 900)))
     s = report["structured_report"]
     assert [c["type"] for c in s["charts"]] == ["doughnut", "bar", "line", "histogram"]
-    statuses = {c["check"]: c["status"] for c in s["verification"]["checks"]}
-    assert statuses["chart:payment_orders"] == "passed" and statuses["chart:courier_charges"] == "passed"
+    assert "verification" not in s
     assert_verified(report)
 
 
@@ -448,7 +450,7 @@ def test_ai_plan_is_validated_against_the_vocabulary():
     assert {r["courier"] for r in kept} == {"Courier B"}
 
 
-def test_ai_planner_runs_only_when_enabled_and_ambiguous(monkeypatch):
+def test_plan_first_runs_before_narrative_for_ambiguous_and_plain_requests(monkeypatch):
     from app.config import settings
     from dataclasses import replace
 
@@ -458,8 +460,13 @@ def test_ai_planner_runs_only_when_enabled_and_ambiguous(monkeypatch):
             self.calls = []
         async def generate_json(self, messages, **options):
             self.calls.append(messages)
-            if "analysis plan" in messages[0]["content"]:
-                return {"filters": [{"field": "payment_mode", "op": "in", "value": ["COD"]}]}
+            if "[report_plan]" in messages[0]["content"]:
+                context = json.loads(messages[1]["content"])
+                return {"intent": "payment_analysis", "source_scope": context["source_scope"],
+                        "cohort": [{"field": "payment_mode", "op": "eq", "value": "COD"}] if "door" in context["prompt"] else [],
+                        "requirement_ids": ["requested_analysis"], "sections": [{"id": "requested_analysis",
+                        "title": "Requested Analysis", "requirement_ids": ["requested_analysis"],
+                        "dimensions": ["courier"], "metrics": ["orders", "delivery_rate"]}]}
             return NARRATIVE
 
     ai = PlannerAI()
@@ -468,10 +475,10 @@ def test_ai_planner_runs_only_when_enabled_and_ambiguous(monkeypatch):
                             data=payload(make_orders(12, payments=("COD", "Prepaid"))))
     report = asyncio.run(service.generate_report(request))
     assert len(ai.calls) == 2 and report.generation["ai_calls"] == 2
-    assert report.records_analyzed == 6 and report.structured_report.plan["source"] == "rules+ai"
+    assert report.records_analyzed == 6 and report.structured_report.plan["source"] == "ai_registered_operations"
     plain = asyncio.run(ReportService(ai, replace(settings, report_ai_planner=True)).generate_report(
         ReportRequest(report_type="shipment", prompt="Compare courier performance", data=payload(make_orders(12)))))
-    assert plain.generation["ai_calls"] == 1
+    assert plain.generation["ai_calls"] == 2
 
 
 # --- City-wise payment-mode comparisons, nested fields, statuses, dates -----------------------------
@@ -520,7 +527,7 @@ def test_city_wise_payment_mode_delivery_comparison(client, ai, prompt):
     assert "unavailable" not in text and "not available" not in text.replace("Not available:", "")
     assert not any(t["title"] in ("Shipment Status Summary", "Top Destination States", "Payment Mode") for t in report["tables"])
     assert_verified(report)
-    assert any(c["check"].startswith("table:plan_grouped") and c["status"] == "passed" for c in s["verification"]["checks"])
+    assert "verification" not in s
 
 
 @pytest.mark.parametrize("nested", [
@@ -557,16 +564,21 @@ def test_lost_and_undelivered_are_separate_statuses(client, ai):
         ["lost", "exception", "exception", "delivered", "other"]
 
 
-def test_record_dates_are_checked_against_api_and_requested_periods(client, ai):
+def test_record_dates_are_checked_against_api_and_requested_periods(client, ai, coverage_audit):
     orders = make_orders(10, day=lambda i: date(2026, 9, 10) if i < 7 else date(2026, 7, 5))
     data = payload(orders, report_filter={"from_date": "2026-09-01", "to_date": "2026-09-30"})
-    report = generate(client, "Shipment status overview", data)
-    scope = report["structured_report"]["scope"]
-    assert scope["records_outside_api_period"] == 3 and "3 supplied records have an order date outside" in scope["statement"]
-    report = generate(client, "Courier performance for last month", data)
-    scope = report["structured_report"]["scope"]
-    assert report["records_analyzed"] == 7 and scope["records_outside_requested_period"] == 3
-    assert "excluded" in scope["statement"]
+    # Records outside the selected period mean the source ignored the filter: stop, never analyse them.
+    body = generate(client, "Shipment status overview", data, status=422)
+    assert body["error"]["code"] == "scope_mismatch"
+    assert body["error"]["details"]["outside_selected_period"] == 3 and body["error"]["details"]["analyzed_records"] == 7
+    # An explicit partial report excludes them and says so.
+    report = generate(client, "Courier performance for last month", data, allow_partial=True)
+    assert report["records_analyzed"] == 7
+    assert coverage_audit[-1]["completeness"]["outside_selected_period"] == 3
+    assert any("3 received shipments outside the selected filters were excluded" in n
+               for n in coverage_audit[-1]["notes"])
+    # Coverage notes are audit-only; they are not shown in the report.
+    assert any("outside the selected filters were excluded" in n for n in report["structured_report"]["limitations"])
 
 
 def test_account_counters_absent_from_api_are_not_shown_as_zero(client, ai):

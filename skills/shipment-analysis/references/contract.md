@@ -1,0 +1,1 @@
+Use metadata-first selection. All edits require account scope, report capability and expected_version. Preserve chart IDs and validated source data. Unsupported dimensions require clarification; missing tracking is never confirmed failure. Angular, Excel and PDF consume the canonical values. Chart metadata changes must not alter analytical datasets.

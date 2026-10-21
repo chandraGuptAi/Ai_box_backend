@@ -38,6 +38,8 @@ def window(rows: list[dict[str, Any]], date_field: str, days: int) -> tuple[list
 
 def measure(rows: list[dict[str, Any]], spec: MeasureSpec) -> float | None:
     """Value of one predefined measure over a group of rows; None when the group has no valid input."""
+    if spec.agg == "share":
+        return None  # Requires the declared section denominator; resolved by the report executor.
     if spec.agg == "count":
         return float(sum(1 for r in rows if matches(r, spec.where)))
     if spec.agg == "rate":
@@ -45,8 +47,13 @@ def measure(rows: list[dict[str, Any]], spec: MeasureSpec) -> float | None:
     values = [v for v in (valid_number(r.get(spec.field)) for r in rows) if v is not None]
     if not values:
         return None
-    total = sum(values)
-    return round(total if spec.agg == "sum" else total / len(values), 2)
+    from decimal import Decimal, ROUND_HALF_UP
+    import statistics
+    numbers = [Decimal(str(value)) for value in values]
+    total = sum(numbers)
+    value = (total if spec.agg == "sum" else statistics.median(numbers) if spec.agg == "median"
+             else max(numbers) if spec.agg == "max" else total / len(numbers))
+    return float(value.quantize(Decimal(".01"), rounding=ROUND_HALF_UP))
 
 
 def group(rows: list[dict[str, Any]], field: str, adapter: DatasetAdapter) -> "OrderedDict[str, list[dict[str, Any]]]":

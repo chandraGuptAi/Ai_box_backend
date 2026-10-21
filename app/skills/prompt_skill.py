@@ -41,7 +41,7 @@ class PromptSkill:
 
     # Domain entities (logistics, shipment, remittance, finances, geography)
     DOMAIN_ENTITIES: set[str] = {
-        "shipment", "shipments", "order", "orders", "courier", "couriers",
+        "shipment", "shipments", "order", "orders", "courier", "couriers", "buyer", "buyers", "consignee", "consignees",
         "carrier", "carriers", "delivery", "delivered", "transit", "undelivered",
         "rto", "ndr", "cancellation", "cancellations", "charge", "charges",
         "freight", "weight", "city", "cities", "state", "states", "destination",

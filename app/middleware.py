@@ -1,13 +1,43 @@
-"""ASGI middleware that rejects request bodies larger than the configured limit."""
+"""ASGI middleware: request IDs and request body size limits."""
 
 from __future__ import annotations
 
 import json
+import re
+import uuid
 
 from fastapi import HTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.errors import error_payload
+from app.errors import error_payload, request_id_var
+
+_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{8,64}$")
+
+
+class RequestIdMiddleware:
+    """One ID per request: a well-formed client X-Request-Id or a new one; echoed in the response
+    header, every error body and the logs, so a failure can be traced without logging payloads."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        supplied = _header(scope, b"x-request-id") or ""
+        request_id = supplied if _REQUEST_ID.match(supplied) else uuid.uuid4().hex
+        token = request_id_var.set(request_id)
+
+        async def send_with_id(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                message["headers"] = [*message.get("headers", []), (b"x-request-id", request_id.encode("ascii"))]
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_with_id)
+        finally:
+            request_id_var.reset(token)
 
 
 class RequestTooLargeError(HTTPException):

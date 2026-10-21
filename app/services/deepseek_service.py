@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -21,8 +23,8 @@ from app.errors import (
 
 logger = logging.getLogger(__name__)
 
-# Every completed DeepSeek call is billed, so a report is generated with exactly one
-# call. Empty, cut-off or malformed output becomes a clear error instead of a re-call.
+# Ordered reports make one typed planning call followed by one grounded narrative call.
+# Rule-only legacy reports make one narrative call. No model-generated code is executed.
 
 
 class DeepSeekService:
@@ -73,15 +75,21 @@ class DeepSeekService:
         return parsed
 
     async def _complete(self, client: AsyncOpenAI, messages: list[dict[str, str]], *, max_tokens: int | None = None) -> str:
+        # httpx's read timeout is the gap between bytes, and DeepSeek sends blank keep-alive lines while a
+        # non-streaming request waits, so it never fires. This is the whole call's deadline.
+        started = time.monotonic()
         try:
-            response = await client.chat.completions.create(
+            response = await asyncio.wait_for(client.chat.completions.create(
                 model=self._settings.deepseek_model,
                 messages=messages,
                 response_format={"type": "json_object"},
                 temperature=self._settings.deepseek_temperature,
                 max_tokens=max_tokens or self._settings.deepseek_max_output_tokens,
                 stream=False,
-            )
+            ), timeout=self._settings.deepseek_timeout_seconds)
+        except asyncio.TimeoutError as exc:
+            logger.warning("DeepSeek call exceeded the %.0fs deadline.", self._settings.deepseek_timeout_seconds)
+            raise AIServiceTimeoutError("The AI service did not respond in time. Please try again.") from exc
         except openai.APITimeoutError as exc:
             raise AIServiceTimeoutError("The AI service did not respond in time. Please try again.") from exc
         except openai.AuthenticationError as exc:
@@ -117,6 +125,7 @@ class DeepSeekService:
             logger.info("%s", json.dumps({"event": "deepseek_usage", "model": self.model,
                 "prompt_tokens": usage.prompt_tokens, "completion_tokens": usage.completion_tokens,
                 "max_output_tokens": max_tokens or self._settings.deepseek_max_output_tokens,
+                "elapsed_seconds": round(time.monotonic() - started, 2),
                 "estimated_cost": estimated_cost, "cost_basis": "configured rates; excludes cache discounts"}))
 
         if not response.choices:

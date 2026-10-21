@@ -136,11 +136,14 @@ def _shipment_context(data: dict[str, Any]) -> DataContext:
     summary = container.get("account_summary") if isinstance(container.get("account_summary"), dict) else \
         data.get("account_summary") if isinstance(data.get("account_summary"), dict) else {}
     raw_filter = container.get("report_filter") if isinstance(container.get("report_filter"), dict) else {}
-    api_filter = {k: scrub_text(raw_filter.get(k), 60) for k in ("status_label", "status", "courier", "payment_mode")}
+    api_filter = {k: scrub_text(raw_filter.get(k), 60) for k in ("status_label", "status", "courier", "payment_mode",
+                                                                 "date_field")}
     # Dates are parsed, not scrubbed: the phone-number scrubber would redact "2026-08-14".
     start, end = parse_date(raw_filter.get("from_date")), parse_date(raw_filter.get("to_date"))
     api_filter.update({"from_date": start.isoformat() if start else None, "to_date": end.isoformat() if end else None})
     api_filter = {k: v for k, v in api_filter.items() if v}
+    if api_filter.get("date_field", "order_date") != "order_date":
+        start = end = None  # the period is of another date field; order dates are not compared with it
     as_of = parse_date(container.get("as_of")) or parse_date(data.get("as_of"))
     return DataContext(records_supplied=len(records), as_of=as_of, api_total=api_total,
                        account_total=_int(summary.get("all_orders")), api_filter=api_filter,
@@ -173,6 +176,7 @@ SHIPMENT_VOCABULARY = PlanVocabulary(
         "order_id": ColumnSpec("Order ID"), "awb_number": ColumnSpec("AWB"), "order_date": ColumnSpec("Order Date", "date"),
         "status": ColumnSpec("Status"), "courier": ColumnSpec("Courier"), "payment_mode": ColumnSpec("Payment Mode"),
         "cancellation_reason": ColumnSpec("Cancellation Reason"), "destination_state": ColumnSpec("Destination State"),
+        "rto_reason": ColumnSpec("RTO Reason"),
         "destination_city": ColumnSpec("Destination City"), "zone": ColumnSpec("Zone"),
         "charge": _MONEY("Shipping Charge", "currency", 2), "order_value": _MONEY("Invoice Value", "currency", 2),
         "collectable_amount": _MONEY("Collectable Amount", "currency", 2), "weight": ColumnSpec("Weight (kg)", "number", 2),
@@ -195,7 +199,7 @@ SHIPMENT_VOCABULARY = PlanVocabulary(
                               "priority", "economy", "heavy", "light", "partner", "solutions", "supply", "chain",
                               "transport", "global", "international", "domestic", "smart", "local"}),
     payment_field="payment_mode",
-    payment_words=((r"\bcod\b|\bcash on delivery\b", "COD"), (r"\bprepaid\b", "Prepaid"), (r"\bto[- ]?pay\b", "ToPay")),
+    payment_words=((r"\bcod\b|\bcash on delivery\b|\bcollected at (?:the )?door\b", "COD"), (r"\bprepaid\b", "Prepaid"), (r"\bto[- ]?pay\b", "ToPay")),
     unavailable=(
         (r"\bprofits?\b|\bprofitability\b|\bmargins?\b|\bnet (?:income|earnings?)\b|\bp\s?&\s?l\b|\bearnings\b",
          "profit or margin", "Profit and margin are not in the order data. Shipping charges, invoice values and collectable "
@@ -206,15 +210,14 @@ SHIPMENT_VOCABULARY = PlanVocabulary(
          "amount is what is due on COD orders, not what was collected; use the remittance reports for payouts."),
         (r"\bcustomer (?:ratings?|satisfaction|feedback|reviews?)\b|\bnps\b|\bcsat\b",
          "customer satisfaction", "Customer ratings or feedback are not in the order data."),
-        (r"\b(?:rto|ndr|return|undelivered) reasons?\b",
-         "RTO or NDR reasons", "The order data has no RTO or NDR reason field; only cancellation reasons are recorded."),
         (r"\blosses\b|\bloss\b|\blost revenue\b",
          "financial losses", "Financial losses are not recorded. Charges on cancelled orders are recorded charges, not "
          "confirmed losses, and are reported only as such."),
     ),
     interpretations=((r"(?<!collected )\brevenue\b(?! (?:collected|received|realis|realiz))",
                       "Revenue is shown as invoice value as supplied; it is not collected revenue."),),
-    required_fields=((r"\bzones?\b", "zone"), (r"\bweights?\b", "weight"), (r"\bcit(?:y|ies)\b", "destination_city"),
+    required_fields=((r"\b(?:rto|return) reasons?\b", "rto_reason"),
+                     (r"\bzones?\b", "zone"), (r"\bweights?\b", "weight"), (r"\bcit(?:y|ies)\b", "destination_city"),
                      (r"\bstates?\b|\bstate[- ]wise\b|\bgeograph\w*", "destination_state"),
                      (r"\bpayment\b|\bcod\b|\bprepaid\b", "payment_mode"), (r"\bcouriers?\b|\bcarriers?\b", "courier"),
                      (r"\breasons?\b", "cancellation_reason"), (r"\binvoice\b|\border values?\b|\bgmv\b", "order_value"),
@@ -236,7 +239,7 @@ SHIPMENT_VOCABULARY = PlanVocabulary(
         "payment_mode": frozenset({"orders", "shipping_charges", "avg_charge"}),
         "status_category": frozenset({"orders"}), "destination_state": frozenset({"orders"}),
         "cancellation_reason": frozenset({"orders"})},
-    duration_pattern=r"\bdelivery (?:time|duration|speed|days|tat)\b|\bturn[- ]?around\b|\btat\b|\btransit time\b|"
+    duration_pattern=r"\bdelivery (?:time|duration|speed|days|tat|timelines?)\b|\bturn[- ]?around\b|\btat\b|\btransit time\b|"
                      r"\bdays to deliver\b|\btime to deliver\b|\blead time\b",
     context=_shipment_context,
     status_field="status_category",

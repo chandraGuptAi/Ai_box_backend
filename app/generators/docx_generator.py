@@ -29,6 +29,7 @@ SEVERITY_COLORS = {
 
 
 def generate_docx(report: ReportDocument) -> bytes:
+    report = ReportDocument.model_validate(report.model_dump())
     doc = Document()
     _configure(doc)
     company = (report.company_name or (report.structured_report.company_name if report.structured_report else None) or "").strip()
@@ -60,8 +61,8 @@ def generate_docx(report: ReportDocument) -> bytes:
         _add_table(doc, columns, rows, align_numbers=False)
 
     if structured:
-        from app.generators.pdf_generator import _resolve_export_charts
-        for chart in _resolve_export_charts(structured.charts, report.prompt):
+        # Exactly the charts in the report, in their stored types: the same ones the preview shows.
+        for chart in structured.charts:
             doc.add_heading(chart.title, level=1)
             image = render_png(chart)
             if image is None:  # e.g. a geographic map: show the exact data instead of an approximation
@@ -184,6 +185,11 @@ def _add_title_block(doc: DocumentType, report: ReportDocument) -> None:
     doc.add_paragraph(report.content.title, style="Title")
 
     meta = []
+    if report.structured_report:
+        from app.report_period import period_label
+        period = period_label(report.structured_report.scope.get("selected_period"))
+        if period:
+            meta.append(("Period", period))
     if company:
         meta.append(("Account", f"{company}" + (f" ({customer_id})" if customer_id else "")))
     meta.extend([

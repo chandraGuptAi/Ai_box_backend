@@ -30,7 +30,7 @@ class MeasureSpec:
     """A predefined aggregation. Nothing else can be computed; no expressions are evaluated."""
     name: str
     label: str
-    agg: Literal["count", "sum", "avg", "rate"]
+    agg: Literal["count", "sum", "avg", "rate", "median", "max", "share"]
     field: str | None = None                      # numeric field for sum / avg
     where: tuple[tuple[str, frozenset], ...] = ()  # count filter, or rate numerator
     value_format: ValueFormat = "number"
@@ -84,12 +84,14 @@ _SHIPPED = _is("in_transit", "delivered", "rto", "exception", "lost")
 
 
 def _shipment_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
-    from app.prompts.shipment_prompt import extract_orders, parse_order
+    from app.prompts.shipment_prompt import extract_orders, parse_order, _lookup, _flatten, scrub_text, extended_shipment_fields
     rows = []
     for index, record in enumerate(extract_orders(data)):
         order = parse_order(record)
+        flat = _flatten(record)
         rows.append({
             "_index": index,  # position in the supplied list; lets an analysis plan scope the source records
+            **extended_shipment_fields(record),
             "order_id": order.order_id,
             "awb_number": order.awb_number,
             "status_category": order.category,
@@ -97,6 +99,8 @@ def _shipment_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
             "courier": order.courier,
             "payment_mode": order.payment_mode,
             "cancellation_reason": order.cancellation_reason,
+            "rto_reason": scrub_text(_lookup(flat, "rto_reason"), 160),
+            "courier_remarks": scrub_text(_lookup(flat, "courier_remarks"), 160),
             "destination_state": order.destination_state,
             "destination_city": order.destination_city,
             "zone": order.zone,
@@ -106,6 +110,9 @@ def _shipment_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
             "weight": order.weight,
             "charge": order.charge,
             "collectable_amount": order.collectable_amount,
+            "delivery_days": ((order.delivery_date - order.order_date).days
+                if order.category == "delivered" and order.order_date and order.delivery_date and order.delivery_date >= order.order_date
+                and (not order.pickup_date or order.order_date <= order.pickup_date <= order.delivery_date) else None),
             "pickup_date": order.pickup_date,
             "delivery_date": order.delivery_date,
         })
@@ -116,13 +123,20 @@ SHIPMENT_ADAPTER = DatasetAdapter(
     report_type="shipment",
     record_label="Orders",
     fields={f.name: f for f in (
+        FieldSpec("delivery_days", "number", "Order-to-delivery days (consistent delivered records only)", ()),
+        FieldSpec("pickup_date", "date", "Pickup Date", ()),
+        FieldSpec("delivery_date", "date", "Delivery Date", ()),
         FieldSpec("courier", "category", "Courier", (r"courier", r"carrier", r"partner")),
+        FieldSpec("buyer", "category", "Buyer / Consignee", (r"buyers?", r"consignees?")),
+        FieldSpec("destination_pincode", "category", "Destination Pincode", (r"pincodes?", r"postal codes?")),
+        FieldSpec("rto_stage", "category", "RTO Stage", (r"rto pending",)),
         FieldSpec("status_category", "category", "Shipment Status", (r"status", r"outcome", r"stage")),
         FieldSpec("payment_mode", "category", "Payment Mode", (r"payment", r"\bcod\b", r"prepaid", r"to\s?pay")),
         FieldSpec("destination_state", "category", "Destination State", (r"\bstates?\b", r"state[- ]wise", r"region", r"geograph", r"destination")),
         FieldSpec("destination_city", "category", "Destination City", (r"\bcity\b", r"\bcities\b", r"city[- ]wise")),
         FieldSpec("zone", "category", "Zone", (r"\bzones?\b",)),
         FieldSpec("cancellation_reason", "category", "Cancellation Reason", (r"reasons?",)),
+        FieldSpec("rto_reason", "category", "RTO Reason", (r"(?:rto|return) reasons?",)),
         FieldSpec("weekday", "category", "Weekday", (r"weekdays?", r"day of (?:the )?week", r"day[- ]wise pattern")),
         FieldSpec("order_date", "date", "Order Date", (r"\bdates?\b", r"daily", r"\bday\b", r"day[- ]wise", r"weekly", r"monthly",
                                                       r"trends?", r"over time", r"timeline", r"time series")),
@@ -135,6 +149,11 @@ SHIPMENT_ADAPTER = DatasetAdapter(
     )},
     measures={m.name: m for m in (
         # Most specific first: the planner takes the first measure whose alias matches.
+        MeasureSpec("share_percent", "Shipment Share (%)", "share", additive=False),
+        MeasureSpec("avg_delivery_days", "Average Delivery Days", "avg", field="delivery_days", additive=False),
+        MeasureSpec("median_delivery_days", "Median Delivery Days", "median", field="delivery_days", additive=False),
+        MeasureSpec("max_delivery_days", "Maximum Delivery Days", "max", field="delivery_days", additive=False),
+        MeasureSpec("median_charge", "Median Shipping Charge", "median", field="charge", value_format="currency", additive=False),
         MeasureSpec("delivery_rate", "Delivery Rate", "rate", where=(("status_category", _is("delivered")),),
                     value_format="percent", additive=False,
                     aliases=(r"delivery (?:rate|performance|success)", r"success rate", r"delivered (?:rate|percent)", r"performance")),

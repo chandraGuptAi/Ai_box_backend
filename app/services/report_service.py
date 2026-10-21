@@ -15,7 +15,8 @@ import threading
 from collections import Counter, OrderedDict
 from typing import Any
 from fastapi import HTTPException
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -23,10 +24,14 @@ from starlette.concurrency import run_in_threadpool
 
 from app.analysis import (ai_plan_messages, annotate_table, build_plan_tables, dataset_scope, get_vocabulary, interpret,
                           matching_rows, merge_ai_plan, plan_narrative, remove_false_absence_claims, verify_report)
+from app.analysis.completeness import SelectedFilters, check_source, selected_filters, with_report_filter
+from app.analysis.accuracy import DatasetSnapshot, validate_final, verify_revision, seal, digest, immutable_data
+from app.errors import NoMatchingRecordsError
+from app.services.shipment_source import ShipmentSource, build_query, delegated_credential
 from app.analysis.interpreter import report_title
 from app.config import BASE_DIR, Settings, settings
-from app.errors import (AIResponseError, AppError, ReportExportError, InvalidReportDataError, InvalidPromptError,
-                        UnsupportedRequestError)
+from app.errors import (AIResponseError, AppError, ClarificationRequiredError, ReportExportError, request_id_var, report_id_var,
+                        InvalidReportDataError, InvalidPromptError, UnsupportedRequestError)
 from app.skills.prompt_skill import prompt_skill
 from app.generators.docx_generator import generate_docx
 from app.generators.pdf_generator import generate_pdf
@@ -41,6 +46,7 @@ from app.models.report_schema import (
     ParagraphBlock, BulletBlock, TableBlock, DisplayMetric, ReportChart, ChartDataset,
 )
 from app.charts import ChartRequest, build_charts, chart_planning_instructions, get_adapter, plan_charts
+from app.charts.edit import ChartEdit, apply_chart_edit, plan_chart_edit
 from app.prompts.base import build_messages
 from app.prompts.report_intent import (detect_intent, scope_analysis, selected_tables, display_metrics,
                                       report_charts, deterministic_narrative, shape_narrative, relevant_metrics)
@@ -56,7 +62,9 @@ _AUDIT_LOCK = threading.Lock()
 
 
 def _log_validation_event(event):
-    logger.warning("%s", json.dumps(event, ensure_ascii=True))
+    event = {**event, "request_id": request_id_var.get(), "report_id": report_id_var.get()}
+    terminal_event = {key: value for key, value in event.items() if key not in {"context", "verified_metrics"}}
+    logger.warning("%s", json.dumps(terminal_event, ensure_ascii=True))
     # Persist safe operational diagnostics, not narrative/customer text.
     audit = logging.getLogger("ai_box.validation_audit")
     try:
@@ -79,6 +87,56 @@ def _log_validation_event(event):
         logger.warning("Validation audit file is unavailable; diagnostics remain in console logs.")
 
 
+_IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _filename_part(value: Any, fallback: str) -> str:
+    """ASCII letters, digits and hyphens only: safe in Content-Disposition and on every file system."""
+    text = re.sub(r"[^A-Za-z0-9]+", "-", str(value or "")).strip("-")[:60].strip("-")
+    return text or fallback
+
+
+def export_filename(seller: Any, report_name: Any, generated_at: datetime, extension: str) -> str:
+    """Bigship_<Seller>_<ReportName>_<Date>.<ext>, dated in India time."""
+    day = (generated_at if generated_at.tzinfo else generated_at.replace(tzinfo=timezone.utc)).astimezone(_IST)
+    return (f"Bigship_{_filename_part(seller, 'Seller')}_{_filename_part(report_name, 'Report')}_"
+            f"{day:%Y-%m-%d}.{extension}")
+
+
+_COVERAGE_LOCK = threading.Lock()
+
+
+def write_coverage_audit(record: dict[str, Any]) -> None:
+    """One JSON line per shipment report attempt in output/report_coverage_audit.jsonl (rotating, never served).
+
+    Holds what the report covered (source counts, selected filters, upstream query, verification) for audit;
+    this is not shown in the report. No credential, prompt text or shipment row is written.
+    """
+    audit = logging.getLogger("ai_box.coverage_audit")
+    try:
+        with _COVERAGE_LOCK:
+            if not any(isinstance(h, RotatingFileHandler) for h in audit.handlers):
+                directory = BASE_DIR / "output"
+                directory.mkdir(parents=True, exist_ok=True)
+                handler = RotatingFileHandler(directory / "report_coverage_audit.jsonl", maxBytes=5_000_000,
+                                              backupCount=5, encoding="utf-8")
+                handler.setFormatter(logging.Formatter("%(message)s"))
+                audit.addHandler(handler)
+                audit.setLevel(logging.INFO)
+            audit.propagate = False
+            audit.info(json.dumps(record, ensure_ascii=True, default=str))
+    except OSError:
+        logger.warning("Coverage audit file is unavailable; report_id=%s outcome=%s",
+                       record.get("report_id"), record.get("outcome"))
+
+
+def _coverage_record(request, user_id, outcome, *, report_id=None, completeness=None, notes=(), details=None):
+    return {"event": "report_coverage", "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "request_id": request_id_var.get(), "report_id": report_id, "user_id": user_id,
+            "report_type": request.report_type, "source": request.source, "outcome": outcome,
+            "completeness": completeness, "notes": list(notes), "details": details}
+
+
 DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 PDF_MEDIA_TYPE = "application/pdf"
 
@@ -87,6 +145,13 @@ PDF_MEDIA_TYPE = "application/pdf"
 _REPORTS = OrderedDict()
 _STORE_LOCK = threading.Lock()
 _STORE_TTL = 24 * 60 * 60
+
+
+def _previous_charts(prev: Any) -> list[dict[str, Any]]:
+    """The charts of the report a follow-up refers to, as posted by the client."""
+    structured = prev.get("structured_report") if isinstance(prev, dict) else None
+    charts = structured.get("charts") if isinstance(structured, dict) else None
+    return [c for c in charts if isinstance(c, dict)] if isinstance(charts, list) else []
 
 
 def _clean(value, limit):
@@ -207,9 +272,48 @@ def _comparison_chart(plan, chart_plan, adapter, prompt):
                         clause=(prompt or "")[:160], source="rule")
 
 
-def _plan_guidance(plan, scope, vocab, adapter):
+def _source_guidance(selected: SelectedFilters, completeness: dict[str, Any]) -> str:
+    """The exact selected filters and record counts, so the narrative describes this scope and nothing wider."""
+    parts = []
+    if selected.from_date or selected.to_date:
+        parts.append(f"{selected.date_field.replace('_', ' ')} {selected.from_date or '...'} to {selected.to_date or '...'} "
+                     f"({selected.timezone})")
+    parts.append(f"status {selected.status_label or 'All'}")
+    text = (f"Selected filters: {'; '.join(parts)}. The source matched {completeness['expected_records']} records, "
+            f"{completeness['unique_records']} unique were received and {completeness['analyzed_records']} are analysed. "
+            if completeness["expected_records"] is not None else f"Selected filters: {'; '.join(parts)}. ")
+    if selected.status:
+        text += (f"Every record has the selected status ({selected.status_label}); this cohort cannot establish "
+                 "account-wide delivery, RTO or cancellation rates, so never state such rates. ")
+    return text
+
+
+def _scope_conflict(plan, selected: SelectedFilters, as_of) -> None:
+    """A prompt asking for a period or status outside the selection is clarified, never silently re-scoped."""
+    period = plan.date_range
+    if period and period.field == selected.date_field and (selected.from_date or selected.to_date):
+        end = min(period.end, as_of) if as_of else period.end  # "this month" is not a request for future days
+        if (selected.from_date and period.start < selected.from_date) or (selected.to_date and end > selected.to_date):
+            sel = f"{selected.from_date or '...'} to {selected.to_date or '...'}"
+            raise ClarificationRequiredError(
+                f"The prompt asks for {period.label} ({period.describe()}), but the selected period is {sel}. "
+                "Change the selected dates to cover that period and reload, or remove the period from the prompt.",
+                details={"conflict": "period", "selected": selected.to_dict(),
+                         "requested": {"from": period.start.isoformat(), "to": period.end.isoformat(),
+                                       "requested": period.label},
+                         "options": ["change_selected_period", "use_selected_period"]})
+    wanted = plan.single_status(get_vocabulary("shipment").status_field)
+    if wanted and selected.status and wanted != selected.status:
+        raise ClarificationRequiredError(
+            f"The prompt asks about {wanted.replace('_', ' ')} shipments, but the selected status is "
+            f"{selected.status_label}. Change the selected status and reload, or remove the status from the prompt.",
+            details={"conflict": "status", "selected": selected.to_dict(), "requested": {"status": wanted},
+                     "options": ["change_selected_status", "use_selected_status"]})
+
+
+def _plan_guidance(plan, scope, vocab, adapter, source_text=""):
     """Plan facts for the single DeepSeek call: what the data covers, how long to be, what is unavailable."""
-    text = ""
+    text = source_text
     parts = plan.describe_scope(adapter, vocab)
     if parts:
         text += ("The dataset is already filtered to: " + "; ".join(parts) + ". Describe results as this subset only; "
@@ -228,10 +332,12 @@ def _plan_guidance(plan, scope, vocab, adapter):
 
 
 class ReportService:
-    def __init__(self, ai_service: DeepSeekService, config: Settings = settings) -> None:
+    def __init__(self, ai_service: DeepSeekService, config: Settings = settings,
+                 source: ShipmentSource | None = None) -> None:
         self._ai = ai_service
         self._settings = config
         self._prompt_skill = prompt_skill
+        self._source = source or ShipmentSource(config)
 
     def list_report_types(self) -> list[ReportTypeInfo]:
         return [
@@ -386,11 +492,51 @@ class ReportService:
 
         return None
 
-    async def generate_report(self, request: ReportRequest) -> ReportResponse:
+    async def generate_report(self, request: ReportRequest, *, shipment_credential: str | None = None,
+                              user_id: str | None = None) -> ReportResponse:
+        report_token = report_id_var.set(uuid.uuid4().hex)
+        request_token = request_id_var.set(request_id_var.get() or uuid.uuid4().hex)
+        try:
+            return await self._generate_report(request, shipment_credential=shipment_credential, user_id=user_id)
+        finally:
+            report_id_var.reset(report_token)
+            request_id_var.reset(request_token)
+
+    async def _generate_report(self, request: ReportRequest, *, shipment_credential: str | None = None,
+                               user_id: str | None = None) -> ReportResponse:
+        """``shipment_credential``: the caller's delegated shipment-service bearer token (shipment_api mode only).
+        ``user_id``: the AI Box user, recorded in the coverage audit log only."""
         definition = get_report_definition(request.report_type)
 
+        # A follow-up that removes or re-types specific charts patches the current report; it is
+        # resolved before prompt validation (an edit is not an analytical request) and never
+        # regenerated. An unclear target raises ChartEditError and the user's report stays as it is.
+        chart_edit = None
+        if request.previous_report:
+            prev_charts = _previous_charts(request.previous_report)
+            chart_edit = plan_chart_edit(request.prompt or "", prev_charts) if prev_charts else None
+            if chart_edit and chart_edit.pure:
+                if request.filters is not None:
+                    previous_scope = (request.previous_report.get("structured_report") or {}).get("scope") or {}
+                    if previous_scope.get("selected_period") != selected_filters(request.filters, request.data or {}).to_dict():
+                        raise ClarificationRequiredError("The selected report filters changed. Generate a report for the "
+                                                         "new period before editing its charts.")
+                patched = self._patch_charts(request.previous_report, chart_edit)
+                if patched is not None:
+                    return patched
+
+        approved_plan = None
+        if definition.report_type == "shipment" and self._settings.report_ai_planner:
+            from app.analysis.interpreter import plan_request_before_fetch
+            # Authenticate delegated access before paying for interpretation; never forward it to AI.
+            if request.source == "shipment_api":
+                delegated_credential(shipment_credential)
+                build_query(request.filters, self._settings)
+            approved_plan = await plan_request_before_fetch(self._ai, request,
+                digest(f"{user_id or 'payload'}:{digest(shipment_credential or '')}")[:20])
+
         # Validate that user prompt represents a meaningful analytical request
-        if request.prompt and request.prompt.strip():
+        if approved_plan is None and request.prompt and request.prompt.strip():
             validation = self._prompt_skill.validate(request.prompt, report_type=request.report_type)
             if not validation.is_valid:
                 ai_suggestions = await self._generate_data_tailored_suggestions(
@@ -404,16 +550,64 @@ class ReportService:
                     validation.suggested_prompts = ai_suggestions
 
                 logger.info(
-                    "PromptSkill rejected invalid prompt: category=%s reason=%s prompt=%r suggestions=%r",
+                    "PromptSkill rejected invalid prompt: category=%s reason=%s prompt=%r suggestion_count=%s",
                     validation.category,
                     validation.reason,
-                    request.prompt[:60],
-                    validation.suggested_prompts,
+                    "[withheld]",
+                    len(validation.suggested_prompts or []),
                 )
                 raise InvalidPromptError(validation.message, details=validation.to_dict())
 
-        # Validation + metric calculation (raises InvalidReportDataError on bad data).
-        analysis = await run_in_threadpool(definition.analyze, request.data)
+        # Source gate: the records must be the complete, de-duplicated set for the selected filters
+        # (expected = fetched = unique, all in scope) before any metric, chart or AI call.
+        source = selected = None
+        try:
+            if request.source == "shipment_api":
+                request, source, selected = await self._fetch_source(request, shipment_credential)
+            elif definition.report_type == "shipment":
+                selected = selected_filters(request.filters, request.data)
+                data_in = with_report_filter(request.data, selected) if request.filters else request.data
+                source = await run_in_threadpool(check_source, data_in, selected,
+                                                 expected_records=request.expected_records,
+                                                 allow_partial=request.allow_partial,
+                                                 enforce=self._settings.require_complete_source)
+                request = request.model_copy(update={"data": source.data})
+        except AppError as exc:  # a stopped fetch or gate is audited too (details hold counts, never credentials)
+            write_coverage_audit(_coverage_record(request, user_id, exc.code, details=exc.details))
+            from app.analysis.accuracy import Audit
+            failed_snapshot = DatasetSnapshot("{}", "[]", "{}", "{}", request_id_var.get() or uuid.uuid4().hex,
+                                              digest(user_id or "payload")[:20], digest(request.prompt), "unavailable")
+            audit = Audit(failed_snapshot, report_id_var.get())
+            details = exc.details if isinstance(exc.details, dict) else {}
+            audit.add("source_gate", False, details.get("expected_records"), details.get("fetched_records"),
+                      "source", "Existing source completeness/scope policy blocked report generation")
+            audit.finish(block=False)
+            raise
+
+        snapshot = None
+        if definition.report_type == "shipment":
+            snapshot = DatasetSnapshot.capture(request.data, source, selected,
+                user_id=f"{user_id or 'payload'}:{digest(shipment_credential or '')}", prompt=request.prompt)
+            # A private working copy from the immutable snapshot is used by every calculation.
+            request = request.model_copy(update={"data": immutable_data(json.loads(snapshot.data_json))})
+
+        if approved_plan is not None:
+            adapter = get_adapter(definition.report_type)
+            vocab = get_vocabulary(definition.report_type)
+            rows = await run_in_threadpool(adapter.rows, request.data)
+            absent_filters = [f.field for f in approved_plan.filters if not any(row.get(f.field) is not None for row in rows)]
+            if absent_filters:
+                raise ClarificationRequiredError("The requested analysis filter cannot be checked because its fields are unavailable.",
+                    details={"clarification_required": True, "missing_fields": sorted(set(absent_filters))})
+            scoped, missing = matching_rows(rows, approved_plan)
+            context = vocab.context(request.data)
+            scope = dataset_scope(context, approved_plan, adapter, vocab, rows, scoped, missing)
+            if not scoped:
+                raise NoMatchingRecordsError("No data available for the selected filters and analysis.",
+                    details={"matching_records": 0, "selected_filters": selected.to_dict() if selected else None})
+            return await self._generate_section_report(request, approved_plan, scope, scoped, snapshot, source,
+                                                       selected, adapter, 1)
+
         intent = detect_intent(request.prompt or definition.default_prompt) if request.report_type == "shipment" else None
         chart_adapter = get_adapter(definition.report_type)
         chart_plan = plan_charts(request.prompt or "", definition.report_type, chart_adapter)
@@ -425,13 +619,23 @@ class ReportService:
         planner_calls = 0
         if vocab:
             plan, scope, scoped_rows, keep, planner_calls = await self._build_plan(request, vocab, chart_adapter, intent,
-                                                                                   chart_plan)
+                chart_plan, account_scope=snapshot.account_scope if snapshot else "payload")
+            if selected is not None:
+                _scope_conflict(plan, selected, await run_in_threadpool(lambda: vocab.context(request.data).as_of))
+            if plan.sections:
+                if not scoped_rows:
+                    raise NoMatchingRecordsError("No data available for the selected filters and analysis.",
+                        details={"matching_records": 0, "selected_filters": selected.to_dict() if selected else None})
+                return await self._generate_section_report(request, plan, scope, scoped_rows, snapshot, source,
+                                                           selected, chart_adapter, planner_calls)
             intent = _plan_intent(intent, plan, vocab)
             if keep is not None and vocab.subset:
                 data = vocab.subset(request.data, keep)  # charts and insights see exactly the analysed records
             if plan.date_range:  # the plan's period already scopes the rows; no second, data-anchored window
                 chart_plan.requests = [replace(r, window_days=None) for r in chart_plan.requests]
 
+        # The approved plan is resolved before any shipment report metrics are calculated.
+        analysis = await run_in_threadpool(definition.analyze, request.data)
         insights = None
         if request.report_type == "shipment" and (keep is None or keep):
             try:
@@ -440,6 +644,11 @@ class ReportService:
                 logger.exception("Shipment insights could not be built; continuing with the v2 report.")
         if intent:
             analysis = await run_in_threadpool(scope_analysis, analysis, request.data, intent, keep)
+        if analysis.records_analyzed == 0:
+            logger.info("No data available: request_id=%s report_id=%s; generation stopped before AI/report creation",
+                        request_id_var.get(), report_id_var.get())
+            raise NoMatchingRecordsError("No data available for the selected filters and analysis.",
+                details={"selected_filters": selected.to_dict() if selected else None, "matching_records": 0})
         if chart_plan.chart_only and intent:
             # Charts only: Python computes them and no narrative is needed, so DeepSeek is not called.
             intent = replace(intent, mode="graphs_only", tables=False, charts=True)
@@ -464,7 +673,8 @@ class ReportService:
                 chart_plan.requests = [r for r in chart_plan.requests if r.resolved and r.source == "rule"
                                        and (r.dimension, r.series) != (comparison_chart.dimension, comparison_chart.series)]
                 chart_plan.requests.append(comparison_chart)
-        guidance = _plan_guidance(plan, scope, vocab, chart_adapter) if plan else ""
+        source_text = _source_guidance(selected, source.completeness) if source else ""
+        guidance = _plan_guidance(plan, scope, vocab, chart_adapter, source_text) if plan else source_text
         messages = build_messages(definition, analysis, request.prompt, intent, guidance)
         planning = chart_planning_instructions(chart_plan, chart_adapter) if chart_adapter else None
         if planning:  # ambiguous chart requests are planned inside the same single call
@@ -614,7 +824,7 @@ class ReportService:
             customer_id = customer_id or prev.get("customer_id") or (prev.get("structured_report", {}).get("customer_id") if isinstance(prev.get("structured_report"), dict) else None)
 
         report = ReportResponse(
-            report_id=uuid.uuid4().hex,
+            report_id=report_id_var.get() or uuid.uuid4().hex,
             report_type=definition.report_type,
             report_name=definition.display_name,
             generated_at=datetime.now(timezone.utc),
@@ -692,26 +902,180 @@ class ReportService:
         if plan is not None:
             self._verify(report, plan, scoped_rows, analysis, chart_adapter, vocab, narrative_source, claims_removed,
                          [r.type for r in chart_plan.requests])
+        if source is not None:
+            # Coverage (counts, filters, verification) is audit data, written to the backend log and not shown in
+            # the report. Only a partial report (allow_partial) is labelled, so it never reads as complete.
+            write_coverage_audit(_coverage_record(request, user_id, "generated", report_id=report.report_id,
+                                                  completeness=source.completeness, notes=source.limitations))
+            partial = list(source.limitations)
+            structured = report.structured_report
+            structured.limitations = list(dict.fromkeys(partial + structured.limitations))[:30]
         if request.previous_report:
             report = self._merge_with_previous_report(report, request.previous_report, request.prompt, intent=intent,
-                                                      chart_plan=chart_plan, customer_id=request.customer_id)
+                                                      chart_edit=chart_edit, customer_id=request.customer_id)
+        if snapshot is not None:
+            if selected is not None:
+                period = selected.to_dict()
+                display_scope = report.structured_report.scope
+                display_scope["selected_period"] = period
+                if period["from_date"] and period["to_date"]:
+                    from app.report_period import period_label
+                    display_scope["observed_data_period"] = display_scope.get("supplied_data_period")
+                    display_scope["display_period"] = period
+                    display_scope["requested_period"] = {"from": period["from_date"], "to": period["to_date"],
+                        "date_field": period["date_field"], "timezone": period["timezone"], "basis": "selected_filters"}
+                    display_scope["period_label"] = period_label(period)
+                if report.insights:
+                    report.insights["scope"]["from_date"] = period["from_date"]
+                    report.insights["scope"]["to_date"] = period["to_date"]
+            from app.analysis.accuracy import repair_coverage
+            repair_coverage(report, snapshot, plan, chart_adapter)
+            report = await run_in_threadpool(validate_final, report, snapshot, plan=plan, adapter=chart_adapter,
+                                            normalized_rows=chart_adapter.rows(json.loads(snapshot.data_json)),
+                                            analysis_rows=scoped_rows, block_on_failure=self._settings.report_accuracy_strict)
         return report
 
-    async def _build_plan(self, request, vocab, adapter, intent, chart_plan):
+    async def _fetch_source(self, request: ReportRequest, credential: str | None):
+        """Fetch every shipment matching the selected filters and pass it through the completeness gate.
+
+        Runs after the metadata-only plan is accepted and before metric/narrative computation.
+        Completeness is always enforced here: the backend owns the fetch, so a gap is an upstream failure.
+        """
+        query = build_query(request.filters, self._settings)
+        logger.info("Shipment range: request_id=%s report_id=%s field=%s timezone=%s selected=%s..%s "
+                    "days=%s from_utc=%s to_utc_exclusive=%s", request_id_var.get(), report_id_var.get(),
+                    query.date_filter_type, query.timezone, request.filters.from_date, request.filters.to_date,
+                    (request.filters.to_date - request.filters.from_date).days + 1, query.from_utc, query.to_utc)
+        result = await self._source.fetch(query, delegated_credential(credential))
+        filters = request.filters
+        selected = SelectedFilters(from_date=filters.from_date, to_date=filters.to_date, status_label=query.status_label,
+                                   date_field=filters.date_field, timezone=filters.timezone)
+        today = datetime.now(ZoneInfo(filters.timezone)).date().isoformat()
+        data: dict[str, Any] = {"getOrderList": {"data": result.rows, "total": result.total}, "as_of": today}
+        if result.account_summary:
+            data["account_summary"] = result.account_summary
+        data = with_report_filter(data, selected)
+        # as_of above is today's date for ages and relative periods, not a source snapshot.
+        info = {**result.source_info(), "data_as_of": None, "reference_date": today}
+        source = await run_in_threadpool(check_source, data, selected, expected_records=result.total,
+                                         allow_partial=request.allow_partial, enforce=True, rows_reconciled=True,
+                                         source_owned=True, source_info=info)
+        return request.model_copy(update={"data": source.data}), source, selected
+
+    def _patch_charts(self, prev: dict[str, Any], edit: ChartEdit) -> ReportResponse | None:
+        """The current report with only the edited charts changed: same report ID, KPIs, tables and text.
+
+        None when the posted report cannot be read as a report; the caller then merges instead.
+        """
+        try:
+            report = ReportResponse.model_validate(prev)
+        except ValidationError:
+            logger.warning("Posted previous report is not a valid report; applying the chart edit through a merge.")
+            return None
+        structured = report.structured_report
+        if structured is None:
+            return None
+        if report.report_type == "shipment":
+            receipt = verify_revision(report)
+        charts = apply_chart_edit([c.model_dump() for c in structured.charts], edit)
+        structured.charts = [ReportChart.model_validate(c) for c in charts]
+        if isinstance(structured.verification, dict) and edit.removed:
+            removed = {f"chart:{chart_id}" for chart_id in edit.removed}
+            checks = [c for c in structured.verification.get("checks") or [] if c.get("check") not in removed]
+            structured.verification = {
+                **structured.verification, "checks": checks,
+                "checked": sum(1 for c in checks if c.get("status") != "not_verifiable"),
+                "not_independently_verified": [n for n in structured.verification.get("not_independently_verified") or []
+                                               if n not in removed]}
+        report.generation = {**(report.generation or {}), "ai_calls": 0, "chart_edit": {
+            "removed": edit.removed, "retyped": edit.retyped}, "notice": edit.message}
+        if report.report_type == "shipment":
+            # A pure edit changes chart presentation only; data and values remain those signed above.
+            from types import SimpleNamespace
+            seal(report, SimpleNamespace(fingerprint=receipt["dataset"], request_id=request_id_var.get() or receipt["request_id"]))
+        logger.info("Chart edit applied without regeneration: removed=%s retyped=%s", edit.removed, edit.retyped)
+        return report
+
+    async def _generate_section_report(self, request, plan, scope, rows, snapshot, source, selected, adapter, planner_calls):
+        """Render the approved AnalysisPlan sections; generic templates never enter this path."""
+        from app.analysis.executor import execute_ordered_sections
+        from app.analysis.section_reports import narrative_messages, grounded_text, verify_section_coverage, section_title
+        datasets = await run_in_threadpool(execute_ordered_sections, plan, rows)
+        texts = {d.requirement.id: [d.text] for d in datasets}
+        narrative_source = "deterministic_fallback"
+        try:
+            raw = await self._ai.generate_json(narrative_messages(request.prompt, plan, datasets, scope),
+                                                max_tokens=self._settings.deepseek_max_output_tokens)
+            texts, repaired = grounded_text(raw, datasets)
+            narrative_source = "ai_repaired" if repaired else "ai"
+        except (AppError, ValidationError, ValueError, TypeError):
+            logger.warning("Grounded narrative unavailable; preserving the approved section datasets. request_id=%s",
+                           request_id_var.get())
+        sections, content_sections, tables, charts, chart_notes, limitations, cards = [], [], [], [], [], [], []
+        for index, dataset in enumerate(datasets):
+            identifier = dataset.requirement.id
+            # Zero/unavailable facts are always Python-authored, regardless of the AI prose.
+            paragraphs = list(dict.fromkeys([dataset.text, *texts[identifier]]))
+            blocks = [ParagraphBlock(type="paragraph", text=p) for p in paragraphs]
+            blocks += [TableBlock(**table.model_dump()) for table in dataset.tables]
+            sections.append(DisplaySection(id=identifier, title=section_title(dataset.requirement), order=index+1, blocks=blocks))
+            content_sections.append({"heading": section_title(dataset.requirement), "content": "\n\n".join(paragraphs)})
+            tables.extend(dataset.tables)
+            charts.extend(dataset.charts)
+            chart_notes.extend(dataset.chart_notes)
+            limitations.extend(dataset.limitations)
+            for key, value in dataset.metrics.items():
+                if ".total." in key:
+                    label = dataset.requirement.title + ": " + adapter.measures[key.split(".total.", 1)[1]].label
+                    cards.append(DisplayMetric(key=key.replace(".", "_"), label=label,
+                        value=value if value is not None else "Unavailable", unit="text"))
+        if source:
+            limitations.extend(source.limitations)
+        limitations = list(dict.fromkeys([*plan.notes, *limitations]))
+        title = ", ".join(section_title(d.requirement) for d in datasets)[:200]
+        company = request.company_name or request.data.get("company_name")
+        customer_id = request.customer_id or request.data.get("customer_id")
+        if selected:
+            period = selected.to_dict()
+            scope = {**scope, "selected_period": period}
+            if period["from_date"] and period["to_date"]:
+                from app.report_period import period_label
+                scope = {**scope, "display_period": period, "period_label": period_label(period),
+                    "observed_data_period": scope.get("supplied_data_period"),
+                    "requested_period": {"from": period["from_date"], "to": period["to_date"], "date_field": period["date_field"],
+                                         "timezone": period["timezone"], "basis": "selected_filters"}}
+        summary = "Requested analyses: " + "; ".join(section_title(d.requirement) for d in datasets) + "."
+        report_id = report_id_var.get() or uuid.uuid4().hex
+        generated_at = datetime.now(timezone.utc)
+        report = ReportResponse(report_id=report_id, report_type="shipment", report_name="Shipment Analysis Report",
+            generated_at=generated_at, prompt=request.prompt, ai_model=self._ai.model, records_analyzed=len(rows),
+            key_metrics=[KeyMetric(label=c.label, value=str(c.value)) for c in cards[:4]], tables=tables,
+            metrics={"section_metrics": {key: value for d in datasets for key, value in d.metrics.items()}},
+            content=ReportContent(title=title, executive_summary=summary, sections=content_sections,
+                                  findings=[], recommendations=[], data_limitations=limitations[:15]),
+            structured_report=StructuredReport(report_id=report_id, report_type="shipment", title=title,
+                subtitle="Shipment Analysis Report", generated_at=generated_at, executive_summary=StructuredSummary(paragraphs=[summary]),
+                metrics=cards[:4], sections=sections, findings=[], recommendations=[], limitations=limitations,
+                charts=charts, chart_notes=chart_notes, scope=scope, company_name=company, customer_id=customer_id,
+                plan=plan.to_dict(adapter, get_vocabulary("shipment"))),
+            company_name=company, customer_id=customer_id,
+            generation={"ai_calls": planner_calls+1, "narrative_source": narrative_source,
+                        "notice": None, "workflow": "approved_ordered_sections"})
+        await run_in_threadpool(verify_section_coverage, report, plan, snapshot, datasets)
+        report = await run_in_threadpool(validate_final, report, snapshot, plan=plan, adapter=adapter,
+            normalized_rows=adapter.rows(request.data), analysis_rows=rows, block_on_failure=self._settings.report_accuracy_strict)
+        if source:
+            write_coverage_audit(_coverage_record(request, None, "generated", report_id=report_id,
+                                                 completeness=source.completeness, notes=source.limitations))
+        return report
+
+    async def _build_plan(self, request, vocab, adapter, intent, chart_plan, account_scope="payload"):
         """(plan, scope, scoped rows, kept record indexes or None, planner AI calls) for this request only."""
         rows = await run_in_threadpool(adapter.rows, request.data)
         context = await run_in_threadpool(vocab.context, request.data)
         plan = interpret(request.prompt or "", vocab=vocab, adapter=adapter, rows=rows, context=context, intent=intent,
                          chart_requested=bool(chart_plan.requests))
         calls = 0
-        if plan.ambiguous and self._settings.report_ai_planner:
-            calls = 1
-            try:
-                raw = await self._ai.generate_json(ai_plan_messages(request.prompt, vocab, adapter, rows, context),
-                                                   max_tokens=400)
-                plan = merge_ai_plan(plan, raw, vocab, adapter, rows)
-            except AppError as exc:  # the rule-based plan still stands; a report never fails on the optional plan
-                logger.warning("AI analysis plan unavailable (%s); using the rule-based plan.", exc.code)
         if not plan.answerable:
             reasons = [u.reason for u in plan.unsupported] or ["The request does not name anything the data contains."]
             raise UnsupportedRequestError(
@@ -732,25 +1096,14 @@ class ReportService:
             rows=rows, analysis=analysis, plan=plan, adapter=adapter, vocab=vocab, charts=structured.charts,
             tables=report.tables, cards=structured.metrics, narrative_source=narrative_source,
             claims_removed=claims_removed)
-        structured.charts, structured.chart_notes = charts, structured.chart_notes + notes
-        if len(tables) != len(report.tables):
-            removed = {table.title for table in report.tables if all(table is not kept for kept in tables)}
-            report.tables = tables
-            for section in structured.sections:
-                section.blocks = [b for b in section.blocks if not (b.type == "table" and b.title in removed)]
-            structured.sections = [s for s in structured.sections if s.blocks]
-            structured.limitations.append("Some tables were removed because their values could not be verified "
-                                          "against the supplied data.")
-        if len(cards) != len(structured.metrics):
-            labels = {card.label for card in cards}
-            report.key_metrics = [m for m in report.key_metrics if m.label in labels]
-            structured.metrics = cards
+        # Preserve the evidence for the final gate. Numerical failures block the report;
+        # they must not be hidden by removing a component before the public response check.
         structured.verification = verification
         structured.plan = plan.to_dict(adapter, vocab, chart_types)
 
     def _merge_with_previous_report(self, report: ReportResponse, prev: dict[str, Any], prompt: str,
-                                    intent: Any | None = None,
-                                    chart_plan: Any | None = None, customer_id: str | None = None) -> ReportResponse:
+                                    intent: Any | None = None, chart_edit: ChartEdit | None = None,
+                                    customer_id: str | None = None) -> ReportResponse:
         prev_sr = prev.get("structured_report") if isinstance(prev.get("structured_report"), dict) else {}
         # Never mix requests: previous content built from other records, or for another customer, is not merged.
         prev_fp = (prev_sr.get("scope") or {}).get("data_fingerprint") if isinstance(prev_sr.get("scope"), dict) else None
@@ -798,49 +1151,22 @@ class ReportService:
                     order += 1
                     merged_sections.append(sec_dump)
 
-            # 3. Merge charts (preserve previous except removed, append new without duplicating IDs)
-            prev_charts = prev_sr.get("charts") or []
-            merged_charts = [c for c in prev_charts if isinstance(c, dict)]
-
-            excluded_targets = set()
-            if intent and getattr(intent, "excluded_charts", ()):
-                excluded_targets.update(intent.excluded_charts)
-            if chart_plan and getattr(chart_plan, "excluded", None):
-                requested_types = {r.type for r in getattr(chart_plan, "requests", [])}
-                excluded_targets.update(t for t in chart_plan.excluded if t not in requested_types)
-
-            prompt_lower = (prompt or "").lower()
-            if not excluded_targets:
-                if re.search(r"\b(?:no|without|remove|delete|omit|drop|hide|exclude)\s+(?:all\s+)?(?:the\s+|this\s+|that\s+)?(?:graphs?|charts?|visualizations?|visuals?)\b|\b(?:graphs?|charts?|visuals?)\s*(?:hata|mat\s+dikh|nahi|remove|delete|drop)\b(?!\s+(?:the\s+|this\s+|that\s+|a\s+|an\s+)?tables?\b)", prompt_lower):
-                    excluded_targets.add("all")
-
-            if "all" in excluded_targets:
-                merged_charts = []
-            else:
-                if "first" in excluded_targets and merged_charts:
-                    merged_charts.pop(0)
-                if "second" in excluded_targets and len(merged_charts) > 1:
-                    merged_charts.pop(1)
-                type_excl = {t for t in excluded_targets if t in {"area", "line", "bar", "pie", "doughnut", "donut"}}
-                if "donut" in type_excl or "doughnut" in type_excl:
-                    type_excl.update({"donut", "doughnut"})
-                if type_excl:
-                    merged_charts = [c for c in merged_charts if (c.get("type") or "").lower() not in type_excl]
-                if "courier" in excluded_targets:
-                    merged_charts = [c for c in merged_charts if "courier" not in (c.get("id") or "").lower() and "courier" not in (c.get("title") or "").lower()]
-                if "status" in excluded_targets:
-                    merged_charts = [c for c in merged_charts if "status" not in (c.get("id") or "").lower() and "status" not in (c.get("title") or "").lower()]
-
-            is_removal_only = bool(excluded_targets) and not bool(re.search(r"\b(?:add|show|include|create|draw|display)\b", prompt_lower))
-            seen_chart_ids = {c.get("id") for c in merged_charts}
-            if not is_removal_only and report.structured_report and report.structured_report.charts:
+            # 3. Charts: the previous charts with only the resolved edit applied (see app/charts/edit.py),
+            # then charts new to this request. A removed chart is never re-added by the regenerated part.
+            prev_charts = [c for c in prev_sr.get("charts") or [] if isinstance(c, dict)]
+            merged_charts = apply_chart_edit(prev_charts, chart_edit) if chart_edit else prev_charts
+            seen_chart_ids = {c.get("id") for c in merged_charts} | set(chart_edit.removed if chart_edit else ())
+            if report.structured_report and report.structured_report.charts:
                 for chart in report.structured_report.charts:
                     chart_dump = chart.model_dump()
-                    cid = chart_dump.get("id")
-                    ctype = (chart_dump.get("type") or "").lower()
-                    if cid not in seen_chart_ids and ctype not in excluded_targets:
-                        seen_chart_ids.add(cid)
+                    if chart_dump.get("id") not in seen_chart_ids:
+                        seen_chart_ids.add(chart_dump.get("id"))
                         merged_charts.append(chart_dump)
+            if chart_edit and report.generation is not None:
+                report.generation["chart_edit"] = {"removed": chart_edit.removed, "retyped": chart_edit.retyped}
+                report.generation["notice"] = chart_edit.message
+
+            prompt_lower = (prompt or "").lower()
 
             # 4. Merge tables
             prev_tables = prev.get("tables") or []
@@ -1011,7 +1337,8 @@ class ReportService:
             _REPORTS[report.report_id] = (now, token, report.model_copy(deep=True))
         return token
 
-    def get_report(self, report_id, authorization):
+    def get_report(self, report_id, authorization, owner_id=None):
+        """In-memory reports need their access token; saved reports are only found for their owner."""
         token = (authorization or "").removeprefix("Bearer ")
         with _STORE_LOCK:
             entry = _REPORTS.get(report_id)
@@ -1019,8 +1346,10 @@ class ReportService:
                 if time.monotonic() - entry[0] > _STORE_TTL or not secrets.compare_digest(token.encode("utf-8"), entry[1].encode("utf-8")):
                     raise HTTPException(status_code=404, detail="Report not found or access denied")
                 return entry[2].model_copy(deep=True)
+        if not owner_id:
+            raise HTTPException(status_code=404, detail="Report not found or access denied")
         from app.storage.database import storage
-        db_record = storage.get_report(report_id)
+        db_record = storage.get_report(report_id, owner_id=owner_id)
         if db_record and db_record.get("report"):
             return ReportResponse.model_validate(db_record["report"])
         raise HTTPException(status_code=404, detail="Report not found or access denied")
@@ -1032,13 +1361,20 @@ class ReportService:
         return self._export(document, generate_pdf, "pdf")
 
     def _export(self, document: ReportDocument, generator, extension: str) -> tuple[bytes, str]:
+        if document.report_type == "shipment":
+            receipt = verify_revision(document)
+            logger.info("Report export revision verified: request_id=%s dataset=%s revision=%s format=%s",
+                        request_id_var.get(), receipt["dataset"], receipt["revision"], extension)
         try:
             content = generator(document)
         except Exception as exc:
             logger.exception("Failed to generate %s document.", extension.upper())
             raise ReportExportError(f"Could not generate the {extension.upper()} document.") from exc
 
-        filename = f"{document.report_type}_report_{document.generated_at:%Y%m%d_%H%M%S}.{extension}"
+        structured = document.structured_report
+        filename = export_filename(document.company_name or document.customer_id,
+                                   (structured.title if structured else None) or document.content.title
+                                   or document.report_name, document.generated_at, extension)
         if self._settings.save_generated_files:
             self._save_copy(content, filename)
         return content, filename

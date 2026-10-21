@@ -105,11 +105,40 @@ class Settings:
     pdf_font_regular: str
     pdf_font_bold: str
     deepseek_compact_output_tokens: int = 1600
-    # Ask DeepSeek for a (validated) analysis plan only when the rules cannot read a stated condition.
-    # Off by default: it is a second, small paid call.
-    report_ai_planner: bool = False
+    # Plan-first reports use one typed planning call and one grounded narrative call.
+    report_ai_planner: bool = True
     deepseek_input_cost_per_million: float | None = None
     deepseek_output_cost_per_million: float | None = None
+    # Local development only: the user ID for AI Box requests that send no X-User-Id.
+    # Empty (default) rejects such requests, so reports never fall into a shared account.
+    dev_user_id: str = ""
+    # Stop when the supplied shipments are not the complete, in-scope set the source matched.
+    require_complete_source: bool = True
+    # Audit-only by default: numerical accuracy failures are logged but do not block delivery.
+    report_accuracy_strict: bool = False
+    # Whole /generate request (shipment fetch + analysis + DeepSeek); exceeded -> 504.
+    report_deadline_seconds: float = 170.0
+
+    # Backend-owned shipment fetch (source="shipment_api"). The URL is fixed by configuration;
+    # requests never choose the host. Empty base URL disables the mode (503).
+    shipment_api_base_url: str = ""
+    shipment_api_path: str = "/api/get-order-list"
+    shipment_api_connect_timeout: float = 5.0
+    shipment_api_read_timeout: float = 30.0
+    shipment_api_total_timeout: float = 60.0      # every upstream call of one report together
+    shipment_api_retries: int = 1                 # per call, for timeouts, network errors and 5xx only
+    shipment_api_fetch_attempts: int = 2          # whole re-reads after the source changed mid-fetch
+    shipment_api_max_records: int = 5000
+    shipment_api_max_page_size: int = 5000        # largest perPage ever requested
+    shipment_api_max_requests: int = 30           # upstream calls per fetch attempt
+    shipment_api_max_response_bytes: int = 64 * 1024 * 1024
+    shipment_api_count_page_size: int = 1
+    shipment_api_segment_type: str = ""           # sent as segment_type (Angular sends "")
+    # Selectable date fields, each sent verbatim as date_filter_type. Only documented values belong here:
+    # the API's default date field (no date_filter_type) is undocumented, so it is not offered.
+    shipment_api_date_fields: tuple[str, ...] = ("manifest_datetime",)
+    shipment_api_max_range_days: int = 186
+    # Triggers config reload
 
     @property
     def deepseek_configured(self) -> bool:
@@ -145,9 +174,27 @@ class Settings:
             pdf_font_regular=_str("PDF_FONT_REGULAR"),
             pdf_font_bold=_str("PDF_FONT_BOLD"),
             deepseek_compact_output_tokens=_int("DEEPSEEK_COMPACT_OUTPUT_TOKENS", 1600, minimum=512),
-            report_ai_planner=_bool("REPORT_AI_PLANNER", False),
+            report_ai_planner=_bool("REPORT_AI_PLANNER", True),
             deepseek_input_cost_per_million=_float("DEEPSEEK_INPUT_COST_PER_MILLION", 0) if _str("DEEPSEEK_INPUT_COST_PER_MILLION") else None,
             deepseek_output_cost_per_million=_float("DEEPSEEK_OUTPUT_COST_PER_MILLION", 0) if _str("DEEPSEEK_OUTPUT_COST_PER_MILLION") else None,
+            dev_user_id=_str("AI_BOX_DEV_USER_ID"),
+            require_complete_source=_bool("REPORT_REQUIRE_COMPLETE_SOURCE", True),
+            report_accuracy_strict=_bool("REPORT_ACCURACY_STRICT", False),
+            report_deadline_seconds=_float("REPORT_DEADLINE_SECONDS", 170.0, minimum=5.0),
+            shipment_api_base_url=_str("SHIPMENT_API_BASE_URL").rstrip("/"),
+            shipment_api_connect_timeout=_float("SHIPMENT_API_CONNECT_TIMEOUT", 5.0, minimum=0.5),
+            shipment_api_read_timeout=_float("SHIPMENT_API_READ_TIMEOUT", 30.0, minimum=1.0),
+            shipment_api_total_timeout=_float("SHIPMENT_API_TOTAL_TIMEOUT", 60.0, minimum=1.0),
+            shipment_api_retries=_int("SHIPMENT_API_RETRIES", 1),
+            shipment_api_fetch_attempts=_int("SHIPMENT_API_FETCH_ATTEMPTS", 2, minimum=1),
+            shipment_api_max_records=_int("SHIPMENT_API_MAX_RECORDS", 5000, minimum=1),
+            shipment_api_max_page_size=_int("SHIPMENT_API_MAX_PAGE_SIZE", 5000, minimum=1),
+            shipment_api_max_requests=_int("SHIPMENT_API_MAX_REQUESTS", 30, minimum=2),
+            shipment_api_max_response_bytes=_int("SHIPMENT_API_MAX_RESPONSE_BYTES", 64 * 1024 * 1024, minimum=1024),
+            shipment_api_count_page_size=_int("SHIPMENT_API_COUNT_PAGE_SIZE", 1, minimum=1),
+            shipment_api_segment_type=_str("SHIPMENT_API_SEGMENT_TYPE"),
+            shipment_api_date_fields=_list("SHIPMENT_API_DATE_FIELDS", ("manifest_datetime",)),
+            shipment_api_max_range_days=_int("SHIPMENT_API_MAX_RANGE_DAYS", 186, minimum=1),
         )
 
 

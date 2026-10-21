@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import time
 from functools import lru_cache
 
 from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import Response
 
+from app.api.auth import CurrentUser, get_optional_user, get_user_reports
+from app.config import settings
+from app.errors import ReportDeadlineError
 from app.models.report_schema import (
     ErrorResponse,
     ReportDocument,
@@ -15,13 +21,17 @@ from app.models.report_schema import (
     ReportTypeInfo,
     SaveReportRequest,
     RenameReportRequest,
+    ValidatePromptRequest,
+    ValidatePromptResponse,
 )
 from app.services.deepseek_service import DeepSeekService
+from app.services.prompt_validator_service import PromptValidatorService
 from app.services.report_service import DOCX_MEDIA_TYPE, PDF_MEDIA_TYPE, ReportService
-from app.storage.database import storage
+from app.storage.user_reports import UserReports
 from fastapi import HTTPException
 
 router = APIRouter(prefix="/api/reports", tags=["Reports"])
+logger = logging.getLogger("ai_box")
 
 _VALIDATION_ERRORS = {
     400: {"model": ErrorResponse, "description": "Unsupported report type"},
@@ -33,6 +43,23 @@ _VALIDATION_ERRORS = {
 @lru_cache
 def get_report_service() -> ReportService:
     return ReportService(DeepSeekService())
+
+
+@lru_cache
+def get_prompt_validator_service() -> PromptValidatorService:
+    return PromptValidatorService(DeepSeekService())
+
+
+@router.post(
+    "/validate-prompt",
+    response_model=ValidatePromptResponse,
+    summary="Validate prompt and generate smart suggestions using DeepSeek",
+)
+async def validate_prompt(
+    request: ValidatePromptRequest,
+    validator: PromptValidatorService = Depends(get_prompt_validator_service),
+) -> ValidatePromptResponse:
+    return await validator.validate_prompt(request)
 
 
 def _file_response(content: bytes, filename: str, media_type: str) -> Response:
@@ -67,17 +94,28 @@ async def generate_report(
     request: ReportRequest,
     response: Response,
     service: ReportService = Depends(get_report_service),
+    user: CurrentUser | None = Depends(get_optional_user),
+    x_shipment_authorization: str | None = Header(default=None, alias="X-Shipment-Authorization", description=(
+        "source=shipment_api only: 'Bearer <BigShip login token>'. Forwarded unchanged as Authorization to the "
+        "configured shipment API only; never logged, stored or sent to the AI model.")),
 ) -> ReportResponse:
-    import json
-    import logging
-    _log = logging.getLogger("ai_box")
-    _log.info("generate_report called: report_type=%s, prompt=%s, data_keys=%s", request.report_type, request.prompt[:50], list(request.data.keys()) if isinstance(request.data, dict) else type(request.data))
-    if isinstance(request.data, dict):
-        for k in ("getOrderList", "orders", "data"):
-            if k in request.data:
-                v = request.data[k]
-                _log.info("request.data['%s']: type=%s, len=%s", k, type(v), len(v) if isinstance(v, (list, dict)) else 'N/A')
-    report = await service.generate_report(request)
+    started = time.monotonic()
+    if request.source == "shipment_api" and user is None:
+        # AI Box login first; the shipment credential is checked separately (shipment_auth_required).
+        raise HTTPException(status_code=401, detail="AI Box login is required: the X-User-Id header is missing.")
+    logger.info("generate_report: report_type=%s source=%s prompt_chars=%s", request.report_type, request.source,
+                len(request.prompt or ""))
+    try:
+        async with asyncio.timeout(settings.report_deadline_seconds) as deadline:
+            report = await service.generate_report(request, shipment_credential=x_shipment_authorization,
+                                                   user_id=user.id if user else None)
+    except TimeoutError:
+        if not deadline.expired():
+            raise
+        raise ReportDeadlineError("The report took too long to create. Please try again, or select a shorter date "
+                                  "range.", details={"deadline_seconds": settings.report_deadline_seconds}) from None
+    logger.info("generate_report done: source=%s records=%s ai_calls=%s ms=%d", request.source,
+                report.records_analyzed, (report.generation or {}).get("ai_calls"), (time.monotonic() - started) * 1000)
     response.headers["X-Report-Access-Token"] = service.store_report(report)
     response.headers["Cache-Control"] = "no-store"
     return report
@@ -114,13 +152,14 @@ def export_pdf(document: ReportDocument, service: ReportService = Depends(get_re
 
 
 @router.get("/overview", summary="Get real-time AI Box dashboard analytics overview")
-def get_overview() -> dict:
-    return storage.get_analytics_overview()
+def get_overview(reports: UserReports = Depends(get_user_reports)) -> dict:
+    return reports.overview()
 
 
 @router.post("/save", summary="Save generated report to database and generate export documents")
 def save_report(
     req: SaveReportRequest,
+    reports: UserReports = Depends(get_user_reports),
     service: ReportService = Depends(get_report_service),
 ) -> dict:
     report_dict = req.report
@@ -129,13 +168,16 @@ def save_report(
             report_obj = service.get_report(req.report_id, None)
             report_dict = report_obj.model_dump(mode="json")
         except Exception:
-            existing = storage.get_report(req.report_id)
+            existing = reports.get(req.report_id)
             if existing and existing.get("report"):
                 report_dict = existing["report"]
             else:
                 raise HTTPException(status_code=404, detail="Report data not found to save")
 
     doc = ReportDocument.model_validate(report_dict)
+    if doc.report_type == "shipment":
+        from app.analysis.accuracy import verify_revision
+        verify_revision(ReportResponse.model_validate(report_dict))
     pdf_bytes = None
     docx_bytes = None
     try:
@@ -147,7 +189,7 @@ def save_report(
     except Exception:
         pass
 
-    saved = storage.save_report(
+    saved = reports.save(
         report_id=req.report_id,
         name=req.name,
         description=req.description,
@@ -158,6 +200,8 @@ def save_report(
         pdf_bytes=pdf_bytes,
         docx_bytes=docx_bytes,
     )
+    if saved is None:
+        raise HTTPException(status_code=409, detail="This report ID cannot be saved. Generate the report again.")
     return {"success": True, "saved_report": saved}
 
 
@@ -167,30 +211,30 @@ def list_saved_reports(
     type: str = Query("", description="Report type filter"),
     page: int = Query(1, ge=1, description="Page number"),
     pageSize: int = Query(10, ge=1, le=100, description="Page size"),
-    createdBy: str = Query("", description="Created by filter"),
+    reports: UserReports = Depends(get_user_reports),
 ) -> dict:
-    return storage.list_reports(search=search, report_type=type, created_by=createdBy, page=page, page_size=pageSize)
+    return reports.list(search=search, report_type=type, page=page, page_size=pageSize)
 
 
 @router.get("/saved/{report_id}", summary="Get a saved report by ID")
-def get_saved_report(report_id: str) -> dict:
-    record = storage.get_report(report_id)
+def get_saved_report(report_id: str, reports: UserReports = Depends(get_user_reports)) -> dict:
+    record = reports.get(report_id)
     if not record:
         raise HTTPException(status_code=404, detail="Saved report not found")
     return record
 
 
 @router.patch("/saved/{report_id}", summary="Rename or update description of a saved report")
-def update_saved_report(report_id: str, req: RenameReportRequest) -> dict:
-    updated = storage.update_report(report_id, name=req.name, description=req.description)
+def update_saved_report(report_id: str, req: RenameReportRequest, reports: UserReports = Depends(get_user_reports)) -> dict:
+    updated = reports.rename(report_id, name=req.name, description=req.description)
     if not updated:
         raise HTTPException(status_code=404, detail="Saved report not found")
     return updated
 
 
 @router.delete("/saved/{report_id}", summary="Delete a saved report and stored files")
-def delete_saved_report(report_id: str) -> dict:
-    deleted = storage.delete_report(report_id)
+def delete_saved_report(report_id: str, reports: UserReports = Depends(get_user_reports)) -> dict:
+    deleted = reports.delete(report_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Saved report not found")
     return {"success": True, "message": "Report deleted successfully"}
@@ -200,11 +244,12 @@ def delete_saved_report(report_id: str) -> dict:
 def download_saved_file(
     report_id: str,
     format: str = Query("pdf", pattern="^(pdf|docx)$"),
+    reports: UserReports = Depends(get_user_reports),
     service: ReportService = Depends(get_report_service),
 ) -> Response:
-    content, filename = storage.get_file_content(report_id, format)
+    content, filename = reports.file(report_id, format)
     if not content:
-        record = storage.get_report(report_id)
+        record = reports.get(report_id)
         if not record or not record.get("report"):
             raise HTTPException(status_code=404, detail="Report document not found")
         doc = ReportDocument.model_validate(record["report"])
@@ -213,13 +258,15 @@ def download_saved_file(
 
 
 @router.get("/{report_id}", response_model=ReportResponse)
-def get_report(report_id: str, authorization: str | None = Header(default=None), service: ReportService = Depends(get_report_service)):
-    return service.get_report(report_id, authorization)
+def get_report(report_id: str, authorization: str | None = Header(default=None),
+               user: CurrentUser | None = Depends(get_optional_user), service: ReportService = Depends(get_report_service)):
+    return service.get_report(report_id, authorization, owner_id=user.id if user else None)
 
 
 @router.get("/{report_id}/download")
 def download_report(report_id: str, format: str = Query(pattern="^(pdf|docx)$"),
-                    authorization: str | None = Header(default=None), service: ReportService = Depends(get_report_service)):
-    report = service.get_report(report_id, authorization)
+                    authorization: str | None = Header(default=None), user: CurrentUser | None = Depends(get_optional_user),
+                    service: ReportService = Depends(get_report_service)):
+    report = service.get_report(report_id, authorization, owner_id=user.id if user else None)
     content, filename = service.export_pdf(report) if format == "pdf" else service.export_docx(report)
     return _file_response(content, filename, PDF_MEDIA_TYPE if format == "pdf" else DOCX_MEDIA_TYPE)

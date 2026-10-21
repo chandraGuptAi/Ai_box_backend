@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -197,7 +198,8 @@ def test_exports(client, path, magic, media_type):
     assert response.status_code == 200, response.text
     assert response.headers["content-type"] == media_type
     assert response.content.startswith(magic)
-    assert "attachment; filename=\"shipment_report_" in response.headers["content-disposition"]
+    assert re.fullmatch(r'attachment; filename="Bigship_[A-Za-z0-9-]+_[A-Za-z0-9-]+_\d{4}-\d{2}-\d{2}\.(pdf|docx)"',
+                        response.headers["content-disposition"])
 
 
 def test_export_validation_error(client):
@@ -303,7 +305,7 @@ def test_stored_report_access_and_downloads(client, fake_ai):
 
 def test_paginated_scope_preserves_denominator(client):
     data = {"getOrderList": {"data": SAMPLE_REQUEST["data"]["getOrderList"], "total": 1000}, "delivered": 900}
-    response = client.post("/api/reports/generate", json={**SAMPLE_REQUEST, "data": data})
+    response = client.post("/api/reports/generate", json={**SAMPLE_REQUEST, "data": data, "allow_partial": True})
     assert response.status_code == 200
     report = response.json()
     assert report["metrics"]["rates"]["delivered_percent"] == 25.0
@@ -525,7 +527,7 @@ def test_failed_report_is_not_stored_and_has_trace_id(client, fake_ai, caplog):
     assert all(e["trace_id"] == details["trace_id"] for e in events)
     assert events[0]["value"] == "999999"
     assert events[0]["field"] == "executive_summary"
-    assert events[0]["verified_metrics"]
+    assert "verified_metrics" not in events[0]  # detailed evidence stays in the private audit file
 
 
 @pytest.mark.parametrize("text", ["-12 orders.", "Delivery rate: 33.3%.", "Financial losses were 12."])
@@ -660,7 +662,9 @@ def test_first_call_repairs_narrative_and_preserves_exports(client, fake_ai, cap
     assert report["structured_report"]["executive_summary"]["paragraphs"] == [
         "12 supplied shipments were reviewed. Review cancellation reasons."
     ]
-    assert report["metrics"] == _sample_metrics()
+    expected_metrics = _sample_metrics()
+    expected_metrics.pop("data_quality_notes", None)
+    assert report["metrics"] == expected_metrics
     assert report["structured_report"]["sections"][0]["blocks"][2]["rows"][0][1] == "3"
     rejection_events = [json.loads(r.message) for r in caplog.records if r.message.startswith('{"event"')]
     assert sum(e["event"] == "report_numeric_rejection" for e in rejection_events) == 1

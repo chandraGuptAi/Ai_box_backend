@@ -46,6 +46,11 @@ class ReportIntent:
         return self.mode in {"table_only", "graphs_only"}
 
 
+# Words that ask for charts ("graphical form", "show it visually", "with diagrams").
+_GRAPH_WORDS = (r"\b(graphs?|graphical(?:ly)?|charts?|visuali[sz]ations?|visuali[sz]e|visual(?:s|ly)?|diagrams?|"
+                r"donut|doughnut)\b")
+
+
 def extract_chart_specs(text: str) -> list[dict]:
     text_lower = text.lower()
     items = re.findall(
@@ -109,7 +114,7 @@ def detect_intent(prompt):
     if remove_all_charts or (bool(re.search(r"\b(no|without)\s+(?:all\s+)?(?:graphs?|charts?|visuals?)\b", text)) and not bool(excluded_charts_list)):
         excluded_charts_list = ["all"]
 
-    has_positive_graph_word = bool(re.search(r"\b(graphs?|charts?|visualizations?|donut|doughnut)\b", text)) and not (
+    has_positive_graph_word = bool(re.search(_GRAPH_WORDS, text)) and not (
         remove_all_charts or bool(re.search(r"\b(no|without)\s+(graphs?|charts?)", text))
     )
     graphs = has_positive_graph_word
@@ -155,7 +160,7 @@ def detect_intent(prompt):
     tables = (tables or all_tables or mode in {"detailed", "comparison"}) and not re.search(r"\b(no|without)\s+tables?", text)
     recommendations = mode in {"detailed", "comparison"} or bool(re.search(r"recommend|suggest|optimization", text))
     no_graphs = "all" in excluded_charts_list or bool(re.search(r"\b(no|without)\s+(graphs?|charts?|visuals?)\b", text))
-    has_graph_word = bool(re.search(r"\b(graphs?|charts?|visualizations?|visuals?|donut|doughnut)\b", text)) and not (
+    has_graph_word = bool(re.search(_GRAPH_WORDS, text)) and not (
         no_graphs or bool(re.search(r"\b(?:remove|delete|omit|drop|hide|exclude)\s+.*?\b(?:graphs?|charts?|visualizations?|visuals?)\b|\b(?:graphs?|charts?|visuals?)\s*(?:hata|mat\s+dikh|nahi|remove|delete|drop)\b(?!\s+(?:the\s+|this\s+|that\s+|a\s+|an\s+)?tables?\b)", text))
     )
     graphs = (not no_graphs) and (has_graph_word or (mode in {"detailed", "comparison"} and not bool(excluded_charts_list)))

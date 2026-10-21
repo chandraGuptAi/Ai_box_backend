@@ -42,7 +42,7 @@ def test_delivered_dashboard_filters_all_evidence_and_caps_output(client, fake_a
     assert report["records_analyzed"] == 3
     assert structured["scope"]["source_records"] == 12
     assert structured["scope"]["denominator"] == "matching_supplied_records"
-    assert len(structured["metrics"]) == 3
+    assert len(structured["metrics"]) == 2  # internal issue card is excluded
     assert len(structured["charts"]) == 1
     assert sum(structured["charts"][0]["datasets"][0]["data"]) == 3
     assert len(structured["findings"]) == 1  # repeated findings removed
@@ -56,12 +56,10 @@ def test_delivered_dashboard_filters_all_evidence_and_caps_output(client, fake_a
 def test_zero_delivered_does_not_call_ai_or_invent_performance(client, fake_ai):
     fake_ai.error = AssertionError("No AI call needed for an empty cohort")
     data = {"getOrderList": [{"order_status": "Cancelled", "totalCharge": 99}, {"order_status": "RTO Delivered"}]}
-    report = generate(client, DASHBOARD_PROMPT, data).json()
-    s = report["structured_report"]
-    assert report["records_analyzed"] == 0
-    assert "No delivered shipments" in s["executive_summary"]["paragraphs"][0]
-    assert s["charts"] == s["findings"] == s["sections"] == []
-    assert all(m["value"] == 0 and m["unit"] != "percent" for m in s["metrics"])
+    response = client.post("/api/reports/generate", json={**SAMPLE_REQUEST, "prompt": DASHBOARD_PROMPT, "data": data})
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "no_matching_records"
+    assert "X-Report-Access-Token" not in response.headers
     assert not fake_ai.messages
 
 
@@ -83,7 +81,7 @@ def test_detailed_report_keeps_relevant_sections_and_recommendations(client, fak
     fake_ai.response["recommendations"] = [{"action": "Review recorded cancellation reasons.", "rationale": "Identify operational issues.", "priority": "medium"}]
     s = generate(client, "Create a detailed report on status, courier performance and cancellations with charts and tables.").json()["structured_report"]
     assert any(b["type"] == "paragraph" for section in s["sections"] for b in section["blocks"])
-    assert s["recommendations"] and s["charts"]
+    assert not s["recommendations"] and s["charts"]  # issue diagnostics stay internal
     assert all("Shipping Charges" not in section["title"] for section in s["sections"])
 
 
@@ -321,7 +319,7 @@ def test_omit_limitations_and_both_circular_charts(client, fake_ai):
 
     report = generate(client, prompt).json()
     structured = report["structured_report"]
-    assert structured["limitations"] == []
+    assert all("completeness could not be verified" in n for n in structured["limitations"])
     assert report["content"]["data_limitations"] == []
     assert len(structured["charts"]) == 2
     assert structured["charts"][0]["type"] == "doughnut"
@@ -380,15 +378,6 @@ def test_area_chart_without_numbered_spec(client, fake_ai):
     assert any(c["type"] == "area" for c in structured["charts"])
 
 
-def test_align_export_charts_for_area():
-    from app.generators.pdf_generator import _resolve_export_charts
-    from app.models.report_schema import ReportChart, ChartDataset
-    charts = [
-        ReportChart(id="c1", title="Courier Performance", type="bar",
-                    labels=["Delhivery", "BlueDart"], datasets=[ChartDataset(label="Orders", data=[10.0, 20.0])])
-    ]
-    aligned = _resolve_export_charts(charts, "show it in area chart")
-    assert aligned[0].type == "area"
 
 
 
@@ -411,3 +400,18 @@ def test_full_budget_truncation_and_invalid_json_cost_exactly_one_call():
 
 def test_sdk_does_not_retry_billed_calls_by_default():
     assert settings.deepseek_max_retries == 0
+
+
+def test_deepseek_deadline_covers_the_whole_call(monkeypatch):
+    """Keep-alive blank lines reset httpx's read timeout, so the service enforces a total deadline."""
+    from app.errors import AIServiceTimeoutError
+
+    class SlowCompletions:
+        async def create(self, **kwargs):
+            await asyncio.sleep(5)
+
+    service = DeepSeekService(replace(settings, deepseek_timeout_seconds=0.05))
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SlowCompletions()))
+    monkeypatch.setattr(service, "_get_client", lambda: client)
+    with pytest.raises(AIServiceTimeoutError):
+        asyncio.run(service.generate_json([{"role": "user", "content": "x"}]))

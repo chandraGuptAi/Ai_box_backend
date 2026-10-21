@@ -259,7 +259,7 @@ def test_chart_removal_followup(client, fake_ai):
     charts3 = report3["structured_report"]["charts"]
     assert len(charts3) == 0
 
-    # Follow-up 3: Hindi "chart hata do" from original report
+    # Follow-up 3: Hindi "chart hata do" on a two-chart report names no single chart: ask, never remove both.
     resp4 = client.post(
         "/api/reports/generate",
         json={
@@ -269,9 +269,22 @@ def test_chart_removal_followup(client, fake_ai):
             "previous_report": report1,
         },
     )
-    assert resp4.status_code == 200
-    report4 = resp4.json()
-    assert len(report4["structured_report"]["charts"]) == 0
+    assert resp4.status_code == 422
+    assert resp4.json()["error"]["code"] == "chart_target_ambiguous"
+    assert len(resp4.json()["error"]["details"]["charts"]) == 2
+
+    # "Both charts" is explicit.
+    resp4b = client.post(
+        "/api/reports/generate",
+        json={
+            "report_type": "shipment",
+            "prompt": "dono chart hata do",
+            "data": shipment_data,
+            "previous_report": report1,
+        },
+    )
+    assert resp4b.status_code == 200
+    assert len(resp4b.json()["structured_report"]["charts"]) == 0
 
     # Follow-up 4: "Include delivery status breakdown remove the chart from report"
     resp5 = client.post(
@@ -283,6 +296,6 @@ def test_chart_removal_followup(client, fake_ai):
             "previous_report": report1,
         },
     )
-    assert resp5.status_code == 200
-    report5 = resp5.json()
-    assert len(report5["structured_report"]["charts"]) == 0
+    # Mixed request with an ambiguous chart target: nothing is changed, the user is asked which chart.
+    assert resp5.status_code == 422
+    assert resp5.json()["error"]["code"] == "chart_target_ambiguous"

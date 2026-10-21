@@ -16,8 +16,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.report_routes import router as report_router
 from app.config import settings
-from app.errors import AppError, error_payload
-from app.middleware import RequestSizeLimitMiddleware
+from app.errors import AppError, error_payload, request_id_var
+from app.middleware import RequestIdMiddleware, RequestSizeLimitMiddleware
 
 logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
 logger = logging.getLogger("ai_box")
@@ -35,8 +35,10 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings.enable_docs else None,
 )
 
-# Middleware added last runs first: CORS wraps the size limit so 413 responses carry CORS headers.
+# Middleware added last runs first: CORS wraps the size limit so 413 responses carry CORS headers,
+# and the request ID wraps both so every error body names its request.
 app.add_middleware(RequestSizeLimitMiddleware, max_bytes=settings.max_request_bytes)
+app.add_middleware(RequestIdMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.cors_allowed_origins),
@@ -45,15 +47,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
     allow_private_network=True,
-    expose_headers=["Content-Disposition", "X-Report-Access-Token"],
+    expose_headers=["Content-Disposition", "X-Report-Access-Token", "X-Request-Id"],
 )
 
 
 @app.exception_handler(AppError)
 async def handle_app_error(_: Request, exc: AppError) -> JSONResponse:
-    if exc.status_code >= 500:
+    if exc.status_code >= 500 or exc.category == "source":
         logger.warning("%s (%s): %s", exc.code, exc.status_code, exc.message)
-    return JSONResponse(status_code=exc.status_code, content=exc.to_payload())
+    headers = None
+    retry_after = (exc.details or {}).get("retry_after_seconds") if isinstance(exc.details, dict) else None
+    if isinstance(retry_after, int):
+        headers = {"Retry-After": str(retry_after)}
+    return JSONResponse(status_code=exc.status_code, content=exc.to_payload(), headers=headers)
 
 
 @app.exception_handler(RequestValidationError)
@@ -75,18 +81,20 @@ async def handle_request_validation_error(_: Request, exc: RequestValidationErro
 
 @app.exception_handler(StarletteHTTPException)
 async def handle_http_exception(_: Request, exc: StarletteHTTPException) -> JSONResponse:
-    codes = {404: "not_found", 405: "method_not_allowed", 413: "request_too_large"}
+    # 401 here is always the AI Box login (X-User-Id / report token), never the shipment service.
+    codes = {401: "ai_box_auth_required", 404: "not_found", 405: "method_not_allowed", 413: "request_too_large"}
     category = "validation" if 400 <= exc.status_code < 500 else "server"
     return JSONResponse(
         status_code=exc.status_code,
-        content=error_payload(codes.get(exc.status_code, "http_error"), category, str(exc.detail)),
+        content=error_payload(codes.get(exc.status_code, "http_error"), category, str(exc.detail),
+                              retryable=exc.status_code in (503, 504)),
         headers=getattr(exc, "headers", None),
     )
 
 
 @app.exception_handler(Exception)
 async def handle_unexpected_error(_: Request, exc: Exception) -> JSONResponse:
-    logger.exception("Unhandled server error", exc_info=exc)
+    logger.exception("Unhandled server error (request_id=%s)", request_id_var.get(), exc_info=exc)
     return JSONResponse(
         status_code=500,
         content=error_payload("internal_error", "server", "An unexpected server error occurred."),
@@ -112,3 +120,5 @@ app.include_router(report_router)
 app.include_router(insights_router)
 app.include_router(skill_router)
 app.include_router(prompt_router)
+from app.api.canonical_report_routes import router as canonical_report_router
+app.include_router(canonical_report_router)

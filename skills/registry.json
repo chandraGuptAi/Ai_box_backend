@@ -1,0 +1,51 @@
+[
+  {
+    "name": "shipment-analysis",
+    "description": "Calculate verified shipment counts and categorical charts.",
+    "version": "1.0.0",
+    "supported_report_types": [
+      "shipment-analysis", "shipment"
+    ],
+    "supported_input_types": [
+      "application_payload", "normalized_shipments"
+    ],
+    "required_data_fields": [
+      "shipment records"
+    ],
+    "required_permissions": [
+      "report capability",
+      "account scope"
+    ],
+    "supported_operations": [
+      "CREATE_REPORT",
+      "EXPORT_REPORT"
+    ],
+    "dependencies": []
+  },
+  {
+    "name": "chart-management",
+    "description": "Modify individual canonical charts while preserving other chart IDs and validated data.",
+    "version": "1.0.0",
+    "supported_report_types": [
+      "shipment-analysis", "shipment"
+    ],
+    "supported_input_types": [
+      "application_payload", "normalized_shipments"
+    ],
+    "required_data_fields": [
+      "shipment records"
+    ],
+    "required_permissions": [
+      "report capability",
+      "account scope"
+    ],
+    "supported_operations": [
+      "ADD_CHART",
+      "REMOVE_CHART",
+      "UPDATE_CHART",
+      "UPDATE_CHART_TYPE",
+      "EDIT_REPORT"
+    ],
+    "dependencies": []
+  }
+]

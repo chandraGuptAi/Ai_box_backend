@@ -116,7 +116,7 @@ def test_api_returns_insights_and_falls_back_instead_of_502(client_with):
     assert ins["title"] == "In transit shipments, 14 Aug 2026 – 13 Oct 2026"
     assert ins["kpis"]["spend"] == 12304.40
     assert not any("rate" in m["label"].lower() for m in report["key_metrics"])
-    assert [m["value"] for m in report["key_metrics"]] == ["11", "11", "₹12,304.40", "₹1,118.58", "₹6,17,802"]
+    assert [m["value"] for m in report["key_metrics"]] == ["11", "₹12,304.40", "₹1,118.58", "₹6,17,802"]
     assert report["key_metrics"][0]["note"] == "17.2% of 64 orders on the account"
     assert report["structured_report"]["title"] == ins["title"]
     assert response.headers.get("X-Report-Access-Token")

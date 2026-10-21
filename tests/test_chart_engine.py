@@ -284,10 +284,6 @@ def test_unproducible_chart_does_not_fail_the_report_and_exports_show_fallback(c
     assert any(t.rows[0].cells[0].text == "State" for t in tables)
 
 
-def test_exports_do_not_rewrite_engine_chart_types():
-    from app.generators.pdf_generator import _resolve_export_charts
-    chart = one("bar chart by courier")
-    assert _resolve_export_charts([chart], "show a donut chart and a bar chart")[0].type == "bar"
 
 
 def test_chart_json_has_no_personal_data_and_numbers_stay_numeric():

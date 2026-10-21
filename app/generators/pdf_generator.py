@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import re
 import threading
 from io import BytesIO
 from types import SimpleNamespace
@@ -207,45 +206,8 @@ def _table(
     return table
 
 
-def _resolve_export_charts(charts, prompt: str | None):
-    """Synchronize export chart forms with prompt preferences identically to frontend chartPreference."""
-    if not prompt or not charts:
-        return charts
-    if any(getattr(c, "source", None) for c in charts):
-        return charts  # chart-engine charts already have exactly the requested types
-    from app.prompts.report_intent import extract_chart_specs
-    text = prompt.lower()
-    specs = extract_chart_specs(text)
-    if specs:
-        return charts
-    wants_area = bool(re.search(r"\b(?:area[- ](?:charts?|graphs?|plots?)|area\s+(?:charts?|graphs?)|(?:in|as|with)\s+area(?:[- ](?:charts?|graphs?))?)\b", text)) and not re.search(r"\b(no|without)\s+area", text)
-    if wants_area:
-        resolved = []
-        for c in charts:
-            c_copy = c.model_copy() if hasattr(c, "model_copy") else c
-            if len(c_copy.labels) >= 2:
-                c_copy.type = "area"
-            resolved.append(c_copy)
-        return resolved
-    wants_bar = bool(re.search(r"\b(bar|column|baar)\s*(?:charts?|graphs?|cha?rt)?\b", text)) and not re.search(r"\b(no|without)\s+(bar|column)", text)
-    both_circular = bool(re.search(r"\b(?:dono\s+(?:graph|chart)[\w\s]*(?:pie|donut|doughnut|circle)|both\s+(?:graphs?|charts?)\s+(?:pie|donut|doughnut|circular)|dono\s+(?:me\s+)?(?:pie|donut))\b", text))
-    if wants_bar and not both_circular:
-        return charts
-    wants_donut = bool(re.search(r"\b(donut|doughnut)s?\b", text)) and not re.search(r"\b(no|without)\s+(donut|doughnut)", text)
-    wants_pie = bool(re.search(r"\bpie\b", text)) and not re.search(r"\b(no|without)\s+pie", text)
-    if not (wants_donut or wants_pie):
-        return charts
-    target = "doughnut" if wants_donut else "pie"
-    resolved = []
-    for c in charts:
-        c_copy = c.model_copy() if hasattr(c, "model_copy") else c
-        if (c_copy.type or "").lower() == "bar" and len(c_copy.datasets) == 1 and 2 <= len(c_copy.labels) <= 8:
-            c_copy.type = target
-        resolved.append(c_copy)
-    return resolved
-
-
 def generate_pdf(report: ReportDocument) -> bytes:
+    report = ReportDocument.model_validate(report.model_dump())
     regular, bold = _register_fonts()
     styles = _styles(regular, bold)
     buffer = BytesIO()
@@ -290,6 +252,11 @@ def generate_pdf(report: ReportDocument) -> bytes:
         story.append(_p(subtitle, styles["subtitle"]))
 
     meta_parts = []
+    if structured:
+        from app.report_period import period_label
+        period = period_label(structured.scope.get("selected_period"))
+        if period:
+            meta_parts.append(f"<b>Period:</b> {escape(period)}")
     if company:
         meta_parts.append(f"<b>Account:</b> {escape(company)}" + (f" ({escape(customer_id)})" if customer_id else ""))
     meta_parts.extend([
@@ -402,7 +369,9 @@ def generate_pdf(report: ReportDocument) -> bytes:
     # 4. Visual Chart - Donut Chart with Center Total & Legend (Single Chart Area)
     rendered_tables = set()
     if structured and structured.charts:
-        for chart in _resolve_export_charts(structured.charts, report.prompt):
+        # Exactly the charts in the report, in their stored types: the same ones the preview shows.
+        # (They are never re-typed from report.prompt; after a follow-up that is the edit instruction.)
+        for chart in structured.charts:
             chart_bytes = render_png(chart)
             if chart_bytes is None:  # e.g. a geographic map: show the exact data instead of an approximation
                 columns, rows = chart_table(chart)
