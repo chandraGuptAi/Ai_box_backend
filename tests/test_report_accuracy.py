@@ -311,3 +311,32 @@ def test_nested_consignee_destination_wins_over_unrelated_root_fields():
               "consignee": {"city": "Destination city", "state": "Destination state"}}
     parsed = parse_order(record)
     assert parsed.destination_city == "Destination city" and parsed.destination_state == "Destination state"
+
+
+def test_browser_json_number_roundtrip_preserves_validated_revision():
+    from app.analysis.accuracy import seal
+    _, snapshot, report = setup_report()
+    report.metrics = {"shipments": 251.0, "nested": [0.0, 100.0, 12.75, None, True]}
+    seal(report, snapshot)
+    # JSON.stringify(JSON.parse(...)) emits integral numbers without .0.
+    browser_body = json.loads(report.model_dump_json(), parse_float=lambda value:
+        int(float(value)) if float(value).is_integer() else float(value))
+    returned = ReportResponse.model_validate(browser_body)
+    assert verify_revision(returned)["report_id"] == report.report_id
+    assert verify_revision(ReportDocument.model_validate(browser_body))
+    returned.metrics["shipments"] = 252
+    with pytest.raises(ReportRevisionError):
+        verify_revision(returned)
+
+
+def test_old_revision_receipts_still_verify_without_numeric_format_marker():
+    import base64
+    import hashlib
+    import hmac
+    from app.analysis.accuracy import canonical, digest, revision_payload, _SIGNING_KEY
+    _, snapshot, report = setup_report()
+    payload = {"report_id": report.report_id, "revision": digest(revision_payload(report)),
+        "response": digest({k: v for k, v in report.model_dump(mode="json").items() if k != "validation_token"})}
+    body = base64.urlsafe_b64encode(canonical(payload).encode()).decode()
+    report.validation_token = body + "." + hmac.new(_SIGNING_KEY, body.encode(), hashlib.sha256).hexdigest()
+    assert verify_revision(report)["report_id"] == report.report_id

@@ -132,3 +132,14 @@ def test_missing_user_is_rejected_unless_dev_user_is_configured(client, monkeypa
 def test_insights_overview_without_user_is_empty(client):
     overview = client.get("/api/ai-insights/overview").json()
     assert overview["totalReports"] == 0 and overview["recentReports"] == []
+
+
+def test_empty_account_overview_does_not_fabricate_one_hundred_records(client):
+    headers = {"X-User-Id": "empty-overview-regression-account"}
+    for path in ("/api/reports/overview", "/api/ai-insights/overview"):
+        response = client.get(path, headers=headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["totalReports"] == 0
+        assert data["availableRecords"] == 0
+        assert data["recentReports"] == []

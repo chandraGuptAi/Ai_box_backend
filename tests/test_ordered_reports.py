@@ -366,3 +366,26 @@ def test_numeric_charts_reuse_registered_builders_and_current_subset(kind, metri
         assert sum(chart.datasets[0].data) == 8
     else:
         assert len(chart.datasets[0].points) == 8
+
+
+def test_report_title_is_short_and_does_not_concatenate_sections():
+    specs = [section("counts", ("payment_mode",)),
+        section("delivered", ("payment_mode",), ("delivery_rate",)),
+        section("returned", ("payment_mode",), ("rto_rate",))]
+    records = shipments()
+    for row in records: row["payment_mode"] = "COD"
+    ai = PlannedAI(specs, alter_plan=lambda p: {**p, "report_title": "COD vs Prepaid Performance"})
+    report, _ = generate(records=records, ai=ai)
+    assert report.content.title == "COD vs Prepaid Performance"
+    assert report.structured_report.title == report.report_name == report.content.title
+    assert len(report.structured_report.sections) == 3
+
+
+def test_missing_report_title_uses_shared_subject_instead_of_all_headings():
+    from app.analysis.interpreter import concise_report_title
+    from app.analysis.plan import AnalysisPlan, ExecutionSection
+    from app.charts.fields import get_adapter
+    specs = [section("counts", ("payment_mode",)), section("rates", ("payment_mode",), ("delivery_rate",))]
+    plan = AnalysisPlan(sections=tuple(ExecutionSection.model_validate(s) for s in specs))
+    assert concise_report_title(plan, get_adapter("shipment")) == "Payment Mode Analysis"
+

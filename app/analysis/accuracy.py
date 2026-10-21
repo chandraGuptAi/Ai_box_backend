@@ -416,10 +416,28 @@ def revision_payload(document):
     return {key: public.get(key) for key in ReportDocument.model_fields if key != "validation_token"}
 
 
+def revision_digest(value, numeric_format=None):
+    """Browsers represent 251.0 and 251 as the same JSON number; preserve all actual values."""
+    if numeric_format is None:
+        return digest(value)  # Previously issued receipts keep their original verification contract.
+    if numeric_format != "json_numbers_v1":
+        raise ValueError("Unsupported report numeric format")
+    def normalize(item):
+        if isinstance(item, dict):
+            return {key: normalize(val) for key, val in item.items()}
+        if isinstance(item, (list, tuple)):
+            return [normalize(val) for val in item]
+        if isinstance(item, float) and item.is_integer():
+            return int(item)
+        return item
+    return digest(normalize(value))
+
+
 def seal(document, snapshot):
     payload = {"dataset": snapshot.fingerprint, "request_id": snapshot.request_id,
-               "report_id": getattr(document, "report_id", None), "revision": digest(revision_payload(document)),
-               "response": digest({k: v for k, v in document.model_dump(mode="json").items() if k != "validation_token"})}
+               "report_id": getattr(document, "report_id", None), "numeric_format": "json_numbers_v1",
+               "revision": revision_digest(revision_payload(document), "json_numbers_v1"),
+               "response": revision_digest({k: v for k, v in document.model_dump(mode="json").items() if k != "validation_token"}, "json_numbers_v1")}
     body = base64.urlsafe_b64encode(canonical(payload).encode()).decode()
     signature = hmac.new(_SIGNING_KEY, body.encode(), hashlib.sha256).hexdigest()
     document.validation_token = body + "." + signature
@@ -432,11 +450,11 @@ def verify_revision(document):
         if not hmac.compare_digest(signature, hmac.new(_SIGNING_KEY, body.encode(), hashlib.sha256).hexdigest()):
             raise ValueError
         payload = json.loads(base64.urlsafe_b64decode(body))
-        if payload["revision"] != digest(revision_payload(document)):
+        if payload["revision"] != revision_digest(revision_payload(document), payload.get("numeric_format")):
             raise ValueError
         if hasattr(document, "report_id"):
             public = {k: v for k, v in document.model_dump(mode="json").items() if k != "validation_token"}
-            if document.report_id != payload["report_id"] or digest(public) != payload["response"]:
+            if document.report_id != payload["report_id"] or revision_digest(public, payload.get("numeric_format")) != payload["response"]:
                 raise ValueError
         return payload
     except (ValueError, KeyError, TypeError):

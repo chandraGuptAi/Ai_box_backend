@@ -348,7 +348,7 @@ class ReportStorage:
             "totalReports": total_reports,
             "reportsThisMonth": reports_this_month,
             "monthlyChangePercent": monthly_change_pct,
-            "availableRecords": total_records if total_records > 0 else 100,
+            "availableRecords": total_records,
             "lastReport": last_report,
             "recentReports": recent_reports,
             "source": "live",

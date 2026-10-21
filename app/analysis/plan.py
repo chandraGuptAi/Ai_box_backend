@@ -156,6 +156,7 @@ class ExecutionSection(BaseModel):
 
 class ReportExecutionProposal(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    report_title: str | None = Field(default=None, min_length=1, max_length=72)
     intent: str = Field(min_length=1, max_length=160)
     required_source: Literal["shipments"] = "shipments"
     source_scope: dict
@@ -180,6 +181,7 @@ class ReportExecutionProposal(BaseModel):
 
 @dataclass(frozen=True)
 class AnalysisPlan:
+    report_title: str | None = None
     detail_level: str = "standard"
     lookup: bool = False             # "show/list these records": answered by Python alone
     narrative: bool = True           # False: no DeepSeek call is needed
@@ -245,6 +247,7 @@ class AnalysisPlan:
                     else "valid metric values within group" if adapter.measures[name].agg == "avg" else None}
                 for name in dict.fromkeys(m for s in self.sections for m in s.metrics)},
             "intent": self.intent,
+            "report_title": self.report_title,
         }
 
 

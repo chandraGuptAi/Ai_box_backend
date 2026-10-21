@@ -149,3 +149,14 @@ new combinations of zone/payment/weight, missing fields, zero subsets, invalid p
 isolation, grounded fallback, numeric charts through registered builders, and matching exports.
 The multilingual tests script model plans and verify exact prompt forwarding; they do not measure
 live DeepSeek language comprehension. The existing authentication/completeness regressions remain enabled.
+
+
+### Browser JSON round trips
+
+New receipts declare `numeric_format=json_numbers_v1` and normalize integral floats to integers
+when hashing signed public content. JavaScript JSON serialization converts values such as `251.0`
+to `251`; these equivalent representations must not invalidate an otherwise unchanged report.
+Strings, nulls, booleans and actual numeric values remain distinct. Unknown formats are rejected.
+Existing receipts without the marker retain their original verification rules. After deploying
+this fix, regenerate reports that failed saving so they receive a new receipt. The signing key
+and database contents do not need changing.

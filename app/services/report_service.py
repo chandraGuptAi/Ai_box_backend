@@ -1032,7 +1032,8 @@ class ReportService:
         if source:
             limitations.extend(source.limitations)
         limitations = list(dict.fromkeys([*plan.notes, *limitations]))
-        title = ", ".join(section_title(d.requirement) for d in datasets)[:200]
+        from app.analysis.interpreter import concise_report_title
+        title = concise_report_title(plan, adapter)
         company = request.company_name or request.data.get("company_name")
         customer_id = request.customer_id or request.data.get("customer_id")
         if selected:
@@ -1047,7 +1048,7 @@ class ReportService:
         summary = "Requested analyses: " + "; ".join(section_title(d.requirement) for d in datasets) + "."
         report_id = report_id_var.get() or uuid.uuid4().hex
         generated_at = datetime.now(timezone.utc)
-        report = ReportResponse(report_id=report_id, report_type="shipment", report_name="Shipment Analysis Report",
+        report = ReportResponse(report_id=report_id, report_type="shipment", report_name=title,
             generated_at=generated_at, prompt=request.prompt, ai_model=self._ai.model, records_analyzed=len(rows),
             key_metrics=[KeyMetric(label=c.label, value=str(c.value)) for c in cards[:4]], tables=tables,
             metrics={"section_metrics": {key: value for d in datasets for key, value in d.metrics.items()}},

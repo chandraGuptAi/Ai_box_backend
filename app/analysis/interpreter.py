@@ -627,6 +627,9 @@ async def plan_request_before_fetch(ai, request, account_scope):
     messages = [{"role": "system", "content": "[report_plan] Interpret the EXACT current request, including Hindi/Hinglish. "
         "Return a typed JSON execution plan using registered dimensions, metrics and filters only. "
         "Select section content and order from this request; there is NO predefined section list or default report template. "
+        "Set report_title to a precise overall name of 3-8 words, at most 72 characters, in the user language. "
+        "Summarize the shared subject, not a list of section titles or metrics. Avoid repeated phrases. "
+        "For example, payment-mode counts and delivery/cancellation/RTO rates can be named COD vs Prepaid Performance. "
         "Invent descriptive unique section IDs and requirement IDs; cover every explicit requirement. "
         "Use only schema/capability metadata now, NEVER claim dataset facts. source_scope must exactly echo protected UI scope. "
         "If dates/status/timezone/date field conflict with UI, intent is materially ambiguous, or request is irrelevant, return clarifications and no sections. "
@@ -669,6 +672,26 @@ async def plan_request_before_fetch(ai, request, account_scope):
                         details={"clarification_required": True, "section_id": section.id, "selected_filters": scope})
     logger.info("[PASS] report_plan request_id=%s sections=%s source_scope=preserved",
         request_id_var.get(), ",".join(s.id for s in proposal.sections))
-    return AnalysisPlan(sections=proposal.sections, intent=proposal.intent, source="ai_registered_operations",
+    return AnalysisPlan(report_title=proposal.report_title, sections=proposal.sections, intent=proposal.intent, source="ai_registered_operations",
         filters=tuple(Filter(f.field, f.op, tuple(f.value) if isinstance(f.value, list) else f.value) for f in proposal.cohort),
         notes=proposal.limitations, recommendations=False)
+
+
+def concise_report_title(plan, adapter):
+    """Use one report-level name; section headings belong in the report body."""
+    title = plan.report_title
+    if not title:
+        shared = set(plan.sections[0].dimensions) if plan.sections else set()
+        for section in plan.sections[1:]:
+            shared.intersection_update(section.dimensions)
+        if shared:
+            dimensions = [d for d in plan.sections[0].dimensions if d in shared]
+            title = " and ".join(adapter.fields[d].label for d in dimensions[:2]) + " Analysis"
+        elif len(plan.sections) == 1:
+            title = plan.sections[0].title
+        else:
+            title = "Shipment Insights"
+    title = " ".join(title.split()[:8])
+    if len(title) > 72:
+        title = title[:73].rsplit(" ", 1)[0] if " " in title[:73] else title[:72]
+    return title.rstrip(" ,;:-")
