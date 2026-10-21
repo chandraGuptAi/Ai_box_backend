@@ -7,6 +7,8 @@ RUN python -m pip install -r requirements.txt && python -m pip check
 COPY app ./app
 COPY scripts ./scripts
 COPY docker ./docker
+# Runtime skill registry read by app/report_engine/registry.py (skills/registry.json and SKILL.md files).
+COPY skills ./skills
 RUN mkdir -p /app/output /app/data && chown -R app:app /app/output /app/data
 USER app
 EXPOSE 8000
