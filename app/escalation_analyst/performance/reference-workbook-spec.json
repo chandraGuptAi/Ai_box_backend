@@ -1,0 +1,3285 @@
+{
+  "sheets": [
+    {
+      "name": "Day_Wise_Performance",
+      "range": "B1:Q43",
+      "headers": [],
+      "formulaPatterns": [
+        {
+          "cell": "E5",
+          "formula": "SUMIF(Backup!A:A,Day_Wise_Performance!B1,Backup!E:E)"
+        },
+        {
+          "cell": "E6",
+          "formula": "COUNTIFS(Backup!A:A,Day_Wise_Performance!$B$1)"
+        },
+        {
+          "cell": "N6",
+          "formula": "E6"
+        },
+        {
+          "cell": "O6",
+          "formula": "IFERROR(N6/$N$9,0)"
+        },
+        {
+          "cell": "E7",
+          "formula": "COUNTIFS(Backup!C:C,Day_Wise_Performance!B7,Backup!A:A,Day_Wise_Performance!B1)"
+        },
+        {
+          "cell": "E8",
+          "formula": "E6-E7"
+        },
+        {
+          "cell": "N9",
+          "formula": "SUM(N6:N8)-N6"
+        },
+        {
+          "cell": "E10",
+          "formula": "SUBTOTAL(9,E12:E120)"
+        },
+        {
+          "cell": "F10",
+          "formula": "SUBTOTAL(9,F12:F120)"
+        },
+        {
+          "cell": "G10",
+          "formula": "SUBTOTAL(9,G12:G120)"
+        },
+        {
+          "cell": "H10",
+          "formula": "SUBTOTAL(9,H12:H120)"
+        },
+        {
+          "cell": "I10",
+          "formula": "SUBTOTAL(9,I12:I120)"
+        },
+        {
+          "cell": "J10",
+          "formula": "SUBTOTAL(9,J12:J120)"
+        },
+        {
+          "cell": "K10",
+          "formula": "SUBTOTAL(9,K12:K120)"
+        },
+        {
+          "cell": "C12",
+          "formula": "TEXT(B12,\"dddd\")"
+        },
+        {
+          "cell": "E12",
+          "formula": "SUMIFS(Backup!E:E, Backup!A:A, Day_Wise_Performance!B12, Backup!B:B, Day_Wise_Performance!D12)"
+        },
+        {
+          "cell": "F12",
+          "formula": "COUNTIFS(Backup!B:B,Day_Wise_Performance!D12,Backup!A:A,Day_Wise_Performance!B12)"
+        },
+        {
+          "cell": "G12",
+          "formula": "COUNTIFS(Backup!$I:$I, G$11, Backup!$B:$B, $D12, Backup!$A:$A, $B12)"
+        },
+        {
+          "cell": "H12",
+          "formula": "COUNTIFS(Backup!$I:$I, H$11, Backup!$B:$B, $D12, Backup!$A:$A, $B12)"
+        },
+        {
+          "cell": "I12",
+          "formula": "COUNTIFS(Backup!$I:$I, I$11, Backup!$B:$B, $D12, Backup!$A:$A, $B12)"
+        },
+        {
+          "cell": "J12",
+          "formula": "COUNTIFS(Backup!$I:$I, J$11, Backup!$B:$B, $D12, Backup!$A:$A, $B12)"
+        },
+        {
+          "cell": "K12",
+          "formula": "COUNTIFS(Backup!$I:$I, K$11, Backup!$B:$B, $D12, Backup!$A:$A, $B12)"
+        },
+        {
+          "cell": "N13",
+          "formula": "COUNTIFS(Backup!$C:$C,Day_Wise_Performance!$M13,Backup!$G:$G,N$12,Backup!$A:$A,Day_Wise_Performance!$B$1)"
+        },
+        {
+          "cell": "O13",
+          "formula": "COUNTIFS(Backup!$C:$C,Day_Wise_Performance!$M13,Backup!$G:$G,O$12,Backup!$A:$A,Day_Wise_Performance!$B$1)"
+        },
+        {
+          "cell": "P13",
+          "formula": "COUNTIFS(Backup!$C:$C,Day_Wise_Performance!$M13,Backup!$G:$G,P$12,Backup!$A:$A,Day_Wise_Performance!$B$1)"
+        },
+        {
+          "cell": "Q13",
+          "formula": "SUM(N13:P13)"
+        },
+        {
+          "cell": "N15",
+          "formula": "SUM(N13:N14)"
+        },
+        {
+          "cell": "O15",
+          "formula": "SUM(O13:O14)"
+        },
+        {
+          "cell": "P15",
+          "formula": "SUM(P13:P14)"
+        },
+        {
+          "cell": "Q15",
+          "formula": "SUM(Q13:Q14)"
+        },
+        {
+          "cell": "N20",
+          "formula": "COUNTIFS(Backup!I:I,Day_Wise_Performance!M20,Backup!A:A,Day_Wise_Performance!$B$1)"
+        },
+        {
+          "cell": "O20",
+          "formula": "IFERROR(N20/$E$6,0)"
+        }
+      ],
+      "formats": [
+        "m/d/yy",
+        "General",
+        "0.0%"
+      ]
+    },
+    {
+      "name": "Overview",
+      "range": "D1:F16",
+      "headers": [],
+      "formulaPatterns": [],
+      "merges": [
+        {
+          "s": {
+            "c": 4,
+            "r": 1
+          },
+          "e": {
+            "c": 5,
+            "r": 1
+          }
+        },
+        {
+          "s": {
+            "c": 4,
+            "r": 2
+          },
+          "e": {
+            "c": 5,
+            "r": 2
+          }
+        },
+        {
+          "s": {
+            "c": 4,
+            "r": 15
+          },
+          "e": {
+            "c": 5,
+            "r": 15
+          }
+        }
+      ],
+      "formats": [
+        "General"
+      ]
+    },
+    {
+      "name": "KAM_MTD_Performance",
+      "range": "A1:AC22",
+      "headers": [
+        {
+          "column": "A",
+          "value": null
+        },
+        {
+          "column": "B",
+          "value": "S.No"
+        },
+        {
+          "column": "C",
+          "value": "EMP_ID"
+        },
+        {
+          "column": "D",
+          "value": "EMP_NAME"
+        },
+        {
+          "column": "E",
+          "value": "COMPANY"
+        },
+        {
+          "column": "F",
+          "value": "Department"
+        },
+        {
+          "column": "G",
+          "value": "No. of Escalation Entries"
+        },
+        {
+          "column": "H",
+          "value": "AWB / LR Escalation"
+        },
+        {
+          "column": "I",
+          "value": "Escalation Closed  ( Deliverd )"
+        },
+        {
+          "column": "J",
+          "value": "Pending AWB / LR"
+        },
+        {
+          "column": "K",
+          "value": "Revert TAT Avg Mints"
+        },
+        {
+          "column": "L",
+          "value": "AWB / LR %"
+        },
+        {
+          "column": "M",
+          "value": "Rank"
+        },
+        {
+          "column": "N",
+          "value": null
+        },
+        {
+          "column": "O",
+          "value": "Delivered"
+        },
+        {
+          "column": "P",
+          "value": "Manifested"
+        },
+        {
+          "column": "Q",
+          "value": "Cancelled"
+        },
+        {
+          "column": "R",
+          "value": "RTO Delivered"
+        },
+        {
+          "column": "S",
+          "value": "Undelivered"
+        },
+        {
+          "column": "T",
+          "value": "RTO In Transit"
+        },
+        {
+          "column": "U",
+          "value": "In-Transit"
+        },
+        {
+          "column": "V",
+          "value": "Pickup Scheduled"
+        },
+        {
+          "column": "W",
+          "value": "Out for Delivery"
+        },
+        {
+          "column": "X",
+          "value": "Not Picked"
+        },
+        {
+          "column": "Y",
+          "value": "Lost"
+        },
+        {
+          "column": "Z",
+          "value": "Total"
+        },
+        {
+          "column": "AA",
+          "value": null
+        },
+        {
+          "column": "AB",
+          "value": "Check"
+        },
+        {
+          "column": "AC",
+          "value": "Check"
+        }
+      ],
+      "formulaPatterns": [
+        {
+          "cell": "E2",
+          "formula": "TEXT(G3,\"mmm\")"
+        },
+        {
+          "cell": "H2",
+          "formula": "\"SUMMARY \"&UPPER(E2)&\"-26\""
+        },
+        {
+          "cell": "E3",
+          "formula": "TEXT(G3,\"Dd\")"
+        },
+        {
+          "cell": "E4",
+          "formula": "D1-E3"
+        },
+        {
+          "cell": "O6",
+          "formula": "SUBTOTAL(9,O8:O21)"
+        },
+        {
+          "cell": "P6",
+          "formula": "SUBTOTAL(9,P8:P21)"
+        },
+        {
+          "cell": "Q6",
+          "formula": "SUBTOTAL(9,Q8:Q21)"
+        },
+        {
+          "cell": "R6",
+          "formula": "SUBTOTAL(9,R8:R21)"
+        },
+        {
+          "cell": "S6",
+          "formula": "SUBTOTAL(9,S8:S21)"
+        },
+        {
+          "cell": "T6",
+          "formula": "SUBTOTAL(9,T8:T21)"
+        },
+        {
+          "cell": "U6",
+          "formula": "SUBTOTAL(9,U8:U21)"
+        },
+        {
+          "cell": "V6",
+          "formula": "SUBTOTAL(9,V8:V21)"
+        },
+        {
+          "cell": "W6",
+          "formula": "SUBTOTAL(9,W8:W21)"
+        },
+        {
+          "cell": "X6",
+          "formula": "SUBTOTAL(9,X8:X21)"
+        },
+        {
+          "cell": "Y6",
+          "formula": "SUBTOTAL(9,Y8:Y21)"
+        },
+        {
+          "cell": "Z6",
+          "formula": "SUBTOTAL(9,Z8:Z21)"
+        },
+        {
+          "cell": "A8",
+          "formula": "CONCATENATE(D8,\"-\",C8,\"-\",E8)"
+        },
+        {
+          "cell": "G8",
+          "formula": "SUMIF(KAM_Daily_Performance!$A:$A,KAM_MTD_Performance!$A8,KAM_Daily_Performance!I:I)"
+        },
+        {
+          "cell": "H8",
+          "formula": "SUMIF(KAM_Daily_Performance!$A:$A,KAM_MTD_Performance!$A8,KAM_Daily_Performance!J:J)"
+        },
+        {
+          "cell": "I8",
+          "formula": "O8"
+        },
+        {
+          "cell": "J8",
+          "formula": "H8-I8"
+        },
+        {
+          "cell": "K8",
+          "formula": "IFERROR(AVERAGEIFS(Backup!P:P,Backup!D:D,KAM_MTD_Performance!A8),0)"
+        },
+        {
+          "cell": "L8",
+          "formula": "IFERROR(I8/H8-1,0)"
+        },
+        {
+          "cell": "M8",
+          "formula": "RANK(I8,$I$8:$I$21,0)"
+        },
+        {
+          "cell": "O8",
+          "formula": "SUMIF(KAM_Daily_Performance!$A:$A,KAM_MTD_Performance!$A8,KAM_Daily_Performance!K:K)"
+        },
+        {
+          "cell": "P8",
+          "formula": "SUMIF(KAM_Daily_Performance!$A:$A,KAM_MTD_Performance!$A8,KAM_Daily_Performance!L:L)"
+        },
+        {
+          "cell": "Q8",
+          "formula": "SUMIF(KAM_Daily_Performance!$A:$A,KAM_MTD_Performance!$A8,KAM_Daily_Performance!M:M)"
+        },
+        {
+          "cell": "R8",
+          "formula": "SUMIF(KAM_Daily_Performance!$A:$A,KAM_MTD_Performance!$A8,KAM_Daily_Performance!N:N)"
+        },
+        {
+          "cell": "S8",
+          "formula": "SUMIF(KAM_Daily_Performance!$A:$A,KAM_MTD_Performance!$A8,KAM_Daily_Performance!O:O)"
+        },
+        {
+          "cell": "T8",
+          "formula": "SUMIF(KAM_Daily_Performance!$A:$A,KAM_MTD_Performance!$A8,KAM_Daily_Performance!P:P)"
+        },
+        {
+          "cell": "U8",
+          "formula": "SUMIF(KAM_Daily_Performance!$A:$A,KAM_MTD_Performance!$A8,KAM_Daily_Performance!Q:Q)"
+        },
+        {
+          "cell": "V8",
+          "formula": "SUMIF(KAM_Daily_Performance!$A:$A,KAM_MTD_Performance!$A8,KAM_Daily_Performance!R:R)"
+        },
+        {
+          "cell": "W8",
+          "formula": "SUMIF(KAM_Daily_Performance!$A:$A,KAM_MTD_Performance!$A8,KAM_Daily_Performance!S:S)"
+        },
+        {
+          "cell": "X8",
+          "formula": "SUMIF(KAM_Daily_Performance!$A:$A,KAM_MTD_Performance!$A8,KAM_Daily_Performance!T:T)"
+        },
+        {
+          "cell": "Y8",
+          "formula": "SUMIF(KAM_Daily_Performance!$A:$A,KAM_MTD_Performance!$A8,KAM_Daily_Performance!U:U)"
+        },
+        {
+          "cell": "Z8",
+          "formula": "SUM(O8:Y8)"
+        },
+        {
+          "cell": "AB8",
+          "formula": "H8=SUM(O8:Y8)"
+        },
+        {
+          "cell": "AC8",
+          "formula": "SUM(O8:Y8)-H8"
+        },
+        {
+          "cell": "B9",
+          "formula": "B8+1"
+        },
+        {
+          "cell": "G22",
+          "formula": "SUBTOTAL(9,G8:G21)"
+        },
+        {
+          "cell": "H22",
+          "formula": "SUBTOTAL(9,H8:H21)"
+        },
+        {
+          "cell": "I22",
+          "formula": "SUBTOTAL(9,I8:I21)"
+        },
+        {
+          "cell": "J22",
+          "formula": "SUBTOTAL(9,J8:J21)"
+        }
+      ],
+      "merges": [
+        {
+          "s": {
+            "c": 7,
+            "r": 1
+          },
+          "e": {
+            "c": 12,
+            "r": 2
+          }
+        },
+        {
+          "s": {
+            "c": 6,
+            "r": 5
+          },
+          "e": {
+            "c": 9,
+            "r": 5
+          }
+        }
+      ],
+      "formats": [
+        "0",
+        "General",
+        "d-mmm-yy",
+        "m/d/yy",
+        "0%",
+        "#,##0_ ;\\-#,##0\\ "
+      ]
+    },
+    {
+      "name": "KAM_Daily_Performance",
+      "range": "A1:Z483",
+      "headers": [
+        {
+          "column": "A",
+          "value": null
+        },
+        {
+          "column": "B",
+          "value": "S.No"
+        },
+        {
+          "column": "C",
+          "value": "Date"
+        },
+        {
+          "column": "D",
+          "value": "Day's"
+        },
+        {
+          "column": "E",
+          "value": "EMP_ID"
+        },
+        {
+          "column": "F",
+          "value": "EMP_NAME"
+        },
+        {
+          "column": "G",
+          "value": "COMPANY"
+        },
+        {
+          "column": "H",
+          "value": "Department"
+        },
+        {
+          "column": "I",
+          "value": "No. of Escalation Entries"
+        },
+        {
+          "column": "J",
+          "value": "AWB / LR Escalation"
+        },
+        {
+          "column": "K",
+          "value": "Delivered"
+        },
+        {
+          "column": "L",
+          "value": "Manifested"
+        },
+        {
+          "column": "M",
+          "value": "Cancelled"
+        },
+        {
+          "column": "N",
+          "value": "RTO Delivered"
+        },
+        {
+          "column": "O",
+          "value": "Undelivered"
+        },
+        {
+          "column": "P",
+          "value": "RTO In Transit"
+        },
+        {
+          "column": "Q",
+          "value": "In-Transit"
+        },
+        {
+          "column": "R",
+          "value": "Pickup Scheduled"
+        },
+        {
+          "column": "S",
+          "value": "Out for Delivery"
+        },
+        {
+          "column": "T",
+          "value": "Not Picked"
+        },
+        {
+          "column": "U",
+          "value": "Lost"
+        },
+        {
+          "column": "V",
+          "value": "Total"
+        },
+        {
+          "column": "W",
+          "value": "Revert TAT Avg Mints"
+        },
+        {
+          "column": "X",
+          "value": null
+        },
+        {
+          "column": "Y",
+          "value": "Check"
+        },
+        {
+          "column": "Z",
+          "value": "Check"
+        }
+      ],
+      "formulaPatterns": [
+        {
+          "cell": "I2",
+          "formula": "SUBTOTAL(9,I4:I1048576)"
+        },
+        {
+          "cell": "J2",
+          "formula": "SUBTOTAL(9,J4:J1048576)"
+        },
+        {
+          "cell": "K2",
+          "formula": "SUBTOTAL(9,K4:K1048576)"
+        },
+        {
+          "cell": "L2",
+          "formula": "SUBTOTAL(9,L4:L1048576)"
+        },
+        {
+          "cell": "M2",
+          "formula": "SUBTOTAL(9,M4:M1048576)"
+        },
+        {
+          "cell": "N2",
+          "formula": "SUBTOTAL(9,N4:N1048576)"
+        },
+        {
+          "cell": "O2",
+          "formula": "SUBTOTAL(9,O4:O1048576)"
+        },
+        {
+          "cell": "P2",
+          "formula": "SUBTOTAL(9,P4:P1048576)"
+        },
+        {
+          "cell": "Q2",
+          "formula": "SUBTOTAL(9,Q4:Q1048576)"
+        },
+        {
+          "cell": "R2",
+          "formula": "SUBTOTAL(9,R4:R1048576)"
+        },
+        {
+          "cell": "S2",
+          "formula": "SUBTOTAL(9,S4:S1048576)"
+        },
+        {
+          "cell": "T2",
+          "formula": "SUBTOTAL(9,T4:T1048576)"
+        },
+        {
+          "cell": "U2",
+          "formula": "SUBTOTAL(9,U4:U1048576)"
+        },
+        {
+          "cell": "V2",
+          "formula": "SUBTOTAL(9,V4:V1048576)"
+        },
+        {
+          "cell": "A4",
+          "formula": "CONCATENATE(F4,\"-\",E4,\"-\",G4)"
+        },
+        {
+          "cell": "D4",
+          "formula": "TEXT(C4,\"dddd\")"
+        },
+        {
+          "cell": "I4",
+          "formula": "SUMIFS(Backup!E:E, Backup!D:D, A4, Backup!A:A, KAM_Daily_Performance!C4)"
+        },
+        {
+          "cell": "J4",
+          "formula": "COUNTIFS(Backup!D:D,A4,Backup!A:A,KAM_Daily_Performance!C4)"
+        },
+        {
+          "cell": "K4",
+          "formula": "COUNTIFS(Backup!$D:$D,$A4,Backup!$I:$I,KAM_Daily_Performance!K$3,Backup!$A:$A,KAM_Daily_Performance!$C4)"
+        },
+        {
+          "cell": "L4",
+          "formula": "COUNTIFS(Backup!$D:$D,$A4,Backup!$I:$I,KAM_Daily_Performance!L$3,Backup!$A:$A,KAM_Daily_Performance!$C4)"
+        },
+        {
+          "cell": "M4",
+          "formula": "COUNTIFS(Backup!$D:$D,$A4,Backup!$I:$I,KAM_Daily_Performance!M$3,Backup!$A:$A,KAM_Daily_Performance!$C4)"
+        },
+        {
+          "cell": "N4",
+          "formula": "COUNTIFS(Backup!$D:$D,$A4,Backup!$I:$I,KAM_Daily_Performance!N$3,Backup!$A:$A,KAM_Daily_Performance!$C4)"
+        },
+        {
+          "cell": "O4",
+          "formula": "COUNTIFS(Backup!$D:$D,$A4,Backup!$I:$I,KAM_Daily_Performance!O$3,Backup!$A:$A,KAM_Daily_Performance!$C4)"
+        },
+        {
+          "cell": "P4",
+          "formula": "COUNTIFS(Backup!$D:$D,$A4,Backup!$I:$I,KAM_Daily_Performance!P$3,Backup!$A:$A,KAM_Daily_Performance!$C4)"
+        },
+        {
+          "cell": "Q4",
+          "formula": "COUNTIFS(Backup!$D:$D,$A4,Backup!$I:$I,KAM_Daily_Performance!Q$3,Backup!$A:$A,KAM_Daily_Performance!$C4)"
+        },
+        {
+          "cell": "R4",
+          "formula": "COUNTIFS(Backup!$D:$D,$A4,Backup!$I:$I,KAM_Daily_Performance!R$3,Backup!$A:$A,KAM_Daily_Performance!$C4)"
+        },
+        {
+          "cell": "S4",
+          "formula": "COUNTIFS(Backup!$D:$D,$A4,Backup!$I:$I,KAM_Daily_Performance!S$3,Backup!$A:$A,KAM_Daily_Performance!$C4)"
+        },
+        {
+          "cell": "T4",
+          "formula": "COUNTIFS(Backup!$D:$D,$A4,Backup!$I:$I,KAM_Daily_Performance!T$3,Backup!$A:$A,KAM_Daily_Performance!$C4)"
+        },
+        {
+          "cell": "U4",
+          "formula": "COUNTIFS(Backup!$D:$D,$A4,Backup!$I:$I,KAM_Daily_Performance!U$3,Backup!$A:$A,KAM_Daily_Performance!$C4)"
+        },
+        {
+          "cell": "V4",
+          "formula": "SUM(K4:U4)"
+        },
+        {
+          "cell": "W4",
+          "formula": "IFERROR(AVERAGEIFS(Backup!P:P,Backup!D:D,KAM_Daily_Performance!A4,Backup!A:A,KAM_Daily_Performance!C4),0)"
+        },
+        {
+          "cell": "Y4",
+          "formula": "J4=SUM(K4:U4)"
+        },
+        {
+          "cell": "Z4",
+          "formula": "SUM(K4:U4)-J4"
+        },
+        {
+          "cell": "B5",
+          "formula": "B4+1"
+        },
+        {
+          "cell": "C20",
+          "formula": "C4+1"
+        }
+      ],
+      "autofilter": {
+        "ref": "A3:Z403"
+      },
+      "formats": [
+        "General",
+        "0",
+        "m/d/yy"
+      ]
+    },
+    {
+      "name": "Seller_MTD_Performance",
+      "range": "A1:Z52",
+      "headers": [
+        {
+          "column": "A",
+          "value": null
+        },
+        {
+          "column": "B",
+          "value": "S.No"
+        },
+        {
+          "column": "C",
+          "value": "Seller_ID"
+        },
+        {
+          "column": "D",
+          "value": "Seller_NAME"
+        },
+        {
+          "column": "E",
+          "value": "Type"
+        },
+        {
+          "column": "F",
+          "value": "No. of Escalation Entries"
+        },
+        {
+          "column": "G",
+          "value": "AWB / LR Escalation"
+        },
+        {
+          "column": "H",
+          "value": "Revert TAT Avg Mints"
+        },
+        {
+          "column": "I",
+          "value": "AWB / LR %"
+        },
+        {
+          "column": "J",
+          "value": "Rank"
+        },
+        {
+          "column": "K",
+          "value": null
+        },
+        {
+          "column": "L",
+          "value": "Delivered"
+        },
+        {
+          "column": "M",
+          "value": "Manifested"
+        },
+        {
+          "column": "N",
+          "value": "Cancelled"
+        },
+        {
+          "column": "O",
+          "value": "RTO Delivered"
+        },
+        {
+          "column": "P",
+          "value": "Undelivered"
+        },
+        {
+          "column": "Q",
+          "value": "RTO In Transit"
+        },
+        {
+          "column": "R",
+          "value": "In-Transit"
+        },
+        {
+          "column": "S",
+          "value": "Pickup Scheduled"
+        },
+        {
+          "column": "T",
+          "value": "Out for Delivery"
+        },
+        {
+          "column": "U",
+          "value": "Not Picked"
+        },
+        {
+          "column": "V",
+          "value": "Lost"
+        },
+        {
+          "column": "W",
+          "value": "Total"
+        },
+        {
+          "column": "X",
+          "value": null
+        },
+        {
+          "column": "Y",
+          "value": "Check"
+        },
+        {
+          "column": "Z",
+          "value": "Check"
+        }
+      ],
+      "formulaPatterns": [
+        {
+          "cell": "E2",
+          "formula": "TEXT(G3,\"mmm\")"
+        },
+        {
+          "cell": "H2",
+          "formula": "\"SUMMARY \"&UPPER(E2)&\"-26\""
+        },
+        {
+          "cell": "E3",
+          "formula": "TEXT(G3,\"Dd\")"
+        },
+        {
+          "cell": "G3",
+          "formula": "KAM_MTD_Performance!G3"
+        },
+        {
+          "cell": "E4",
+          "formula": "D1-E3"
+        },
+        {
+          "cell": "L6",
+          "formula": "SUBTOTAL(9,L8:L51)"
+        },
+        {
+          "cell": "M6",
+          "formula": "SUBTOTAL(9,M8:M51)"
+        },
+        {
+          "cell": "N6",
+          "formula": "SUBTOTAL(9,N8:N51)"
+        },
+        {
+          "cell": "O6",
+          "formula": "SUBTOTAL(9,O8:O51)"
+        },
+        {
+          "cell": "P6",
+          "formula": "SUBTOTAL(9,P8:P51)"
+        },
+        {
+          "cell": "Q6",
+          "formula": "SUBTOTAL(9,Q8:Q51)"
+        },
+        {
+          "cell": "R6",
+          "formula": "SUBTOTAL(9,R8:R51)"
+        },
+        {
+          "cell": "S6",
+          "formula": "SUBTOTAL(9,S8:S51)"
+        },
+        {
+          "cell": "T6",
+          "formula": "SUBTOTAL(9,T8:T51)"
+        },
+        {
+          "cell": "U6",
+          "formula": "SUBTOTAL(9,U8:U51)"
+        },
+        {
+          "cell": "V6",
+          "formula": "SUBTOTAL(9,V8:V51)"
+        },
+        {
+          "cell": "W6",
+          "formula": "SUBTOTAL(9,W8:W51)"
+        },
+        {
+          "cell": "A8",
+          "formula": "CONCATENATE(D8,\"-\",C8,\"-\",E8)"
+        },
+        {
+          "cell": "F8",
+          "formula": "SUMIF(Seller_Daily_Performance!$A:$A,Seller_MTD_Performance!$A8,Seller_Daily_Performance!H:H)"
+        },
+        {
+          "cell": "G8",
+          "formula": "SUMIF(Seller_Daily_Performance!$A:$A,Seller_MTD_Performance!$A8,Seller_Daily_Performance!I:I)"
+        },
+        {
+          "cell": "H8",
+          "formula": "IFERROR(AVERAGEIFS(Backup!P:P,Backup!D:D,Seller_MTD_Performance!A8),0)"
+        },
+        {
+          "cell": "I8",
+          "formula": "IFERROR(G8/F8-1,0)"
+        },
+        {
+          "cell": "J8",
+          "formula": "RANK(G8,$G$8:$G$51,0)"
+        },
+        {
+          "cell": "L8",
+          "formula": "SUMIF(Seller_Daily_Performance!$A:$A,Seller_MTD_Performance!$A8,Seller_Daily_Performance!J:J)"
+        },
+        {
+          "cell": "M8",
+          "formula": "SUMIF(Seller_Daily_Performance!$A:$A,Seller_MTD_Performance!$A8,Seller_Daily_Performance!K:K)"
+        },
+        {
+          "cell": "N8",
+          "formula": "SUMIF(Seller_Daily_Performance!$A:$A,Seller_MTD_Performance!$A8,Seller_Daily_Performance!L:L)"
+        },
+        {
+          "cell": "O8",
+          "formula": "SUMIF(Seller_Daily_Performance!$A:$A,Seller_MTD_Performance!$A8,Seller_Daily_Performance!M:M)"
+        },
+        {
+          "cell": "P8",
+          "formula": "SUMIF(Seller_Daily_Performance!$A:$A,Seller_MTD_Performance!$A8,Seller_Daily_Performance!N:N)"
+        },
+        {
+          "cell": "Q8",
+          "formula": "SUMIF(Seller_Daily_Performance!$A:$A,Seller_MTD_Performance!$A8,Seller_Daily_Performance!O:O)"
+        },
+        {
+          "cell": "R8",
+          "formula": "SUMIF(Seller_Daily_Performance!$A:$A,Seller_MTD_Performance!$A8,Seller_Daily_Performance!P:P)"
+        },
+        {
+          "cell": "S8",
+          "formula": "SUMIF(Seller_Daily_Performance!$A:$A,Seller_MTD_Performance!$A8,Seller_Daily_Performance!Q:Q)"
+        },
+        {
+          "cell": "T8",
+          "formula": "SUMIF(Seller_Daily_Performance!$A:$A,Seller_MTD_Performance!$A8,Seller_Daily_Performance!R:R)"
+        },
+        {
+          "cell": "U8",
+          "formula": "SUMIF(Seller_Daily_Performance!$A:$A,Seller_MTD_Performance!$A8,Seller_Daily_Performance!S:S)"
+        },
+        {
+          "cell": "V8",
+          "formula": "SUMIF(Seller_Daily_Performance!$A:$A,Seller_MTD_Performance!$A8,Seller_Daily_Performance!T:T)"
+        },
+        {
+          "cell": "W8",
+          "formula": "SUM(L8:V8)"
+        },
+        {
+          "cell": "Y8",
+          "formula": "G8=SUM(L8:V8)"
+        },
+        {
+          "cell": "Z8",
+          "formula": "SUM(L8:V8)-G8"
+        },
+        {
+          "cell": "B9",
+          "formula": "B8+1"
+        },
+        {
+          "cell": "F52",
+          "formula": "SUBTOTAL(9,F8:F51)"
+        },
+        {
+          "cell": "G52",
+          "formula": "SUBTOTAL(9,G8:G51)"
+        }
+      ],
+      "merges": [
+        {
+          "s": {
+            "c": 5,
+            "r": 5
+          },
+          "e": {
+            "c": 6,
+            "r": 5
+          }
+        },
+        {
+          "s": {
+            "c": 7,
+            "r": 1
+          },
+          "e": {
+            "c": 10,
+            "r": 2
+          }
+        }
+      ],
+      "formats": [
+        "0",
+        "General",
+        "d-mmm-yy",
+        "0%",
+        "#,##0_ ;\\-#,##0\\ "
+      ]
+    },
+    {
+      "name": "Seller_Daily_Performance",
+      "range": "A1:Y1235",
+      "headers": [
+        {
+          "column": "A",
+          "value": null
+        },
+        {
+          "column": "B",
+          "value": "S.No"
+        },
+        {
+          "column": "C",
+          "value": "Date"
+        },
+        {
+          "column": "D",
+          "value": "Day's"
+        },
+        {
+          "column": "E",
+          "value": "Seller_ID"
+        },
+        {
+          "column": "F",
+          "value": "Seller_NAME"
+        },
+        {
+          "column": "G",
+          "value": "Type"
+        },
+        {
+          "column": "H",
+          "value": "No. of Escalation Entries"
+        },
+        {
+          "column": "I",
+          "value": "AWB / LR Escalation"
+        },
+        {
+          "column": "J",
+          "value": "Delivered"
+        },
+        {
+          "column": "K",
+          "value": "Manifested"
+        },
+        {
+          "column": "L",
+          "value": "Cancelled"
+        },
+        {
+          "column": "M",
+          "value": "RTO Delivered"
+        },
+        {
+          "column": "N",
+          "value": "Undelivered"
+        },
+        {
+          "column": "O",
+          "value": "RTO In Transit"
+        },
+        {
+          "column": "P",
+          "value": "In-Transit"
+        },
+        {
+          "column": "Q",
+          "value": "Pickup Scheduled"
+        },
+        {
+          "column": "R",
+          "value": "Out for Delivery"
+        },
+        {
+          "column": "S",
+          "value": "Not Picked"
+        },
+        {
+          "column": "T",
+          "value": "Lost"
+        },
+        {
+          "column": "U",
+          "value": "Total"
+        },
+        {
+          "column": "V",
+          "value": "Revert TAT Avg Mints"
+        },
+        {
+          "column": "W",
+          "value": null
+        },
+        {
+          "column": "X",
+          "value": "Check"
+        },
+        {
+          "column": "Y",
+          "value": "Check"
+        }
+      ],
+      "formulaPatterns": [
+        {
+          "cell": "H2",
+          "formula": "SUBTOTAL(9,H4:H1048576)"
+        },
+        {
+          "cell": "I2",
+          "formula": "SUBTOTAL(9,I4:I1048576)"
+        },
+        {
+          "cell": "J2",
+          "formula": "SUBTOTAL(9,J4:J1048576)"
+        },
+        {
+          "cell": "K2",
+          "formula": "SUBTOTAL(9,K4:K1048576)"
+        },
+        {
+          "cell": "L2",
+          "formula": "SUBTOTAL(9,L4:L1048576)"
+        },
+        {
+          "cell": "M2",
+          "formula": "SUBTOTAL(9,M4:M1048576)"
+        },
+        {
+          "cell": "N2",
+          "formula": "SUBTOTAL(9,N4:N1048576)"
+        },
+        {
+          "cell": "O2",
+          "formula": "SUBTOTAL(9,O4:O1048576)"
+        },
+        {
+          "cell": "P2",
+          "formula": "SUBTOTAL(9,P4:P1048576)"
+        },
+        {
+          "cell": "Q2",
+          "formula": "SUBTOTAL(9,Q4:Q1048576)"
+        },
+        {
+          "cell": "R2",
+          "formula": "SUBTOTAL(9,R4:R1048576)"
+        },
+        {
+          "cell": "S2",
+          "formula": "SUBTOTAL(9,S4:S1048576)"
+        },
+        {
+          "cell": "T2",
+          "formula": "SUBTOTAL(9,T4:T1048576)"
+        },
+        {
+          "cell": "U2",
+          "formula": "SUBTOTAL(9,U4:U1048576)"
+        },
+        {
+          "cell": "A4",
+          "formula": "CONCATENATE(F4,\"-\",E4,\"-\",G4)"
+        },
+        {
+          "cell": "D4",
+          "formula": "TEXT(C4,\"dddd\")"
+        },
+        {
+          "cell": "H4",
+          "formula": "SUMIFS(Backup!E:E, Backup!D:D, A4, Backup!A:A, Seller_Daily_Performance!C4)"
+        },
+        {
+          "cell": "I4",
+          "formula": "COUNTIFS(Backup!D:D,A4,Backup!A:A,Seller_Daily_Performance!C4)"
+        },
+        {
+          "cell": "J4",
+          "formula": "COUNTIFS(Backup!$D:$D,$A4,Backup!$I:$I,Seller_Daily_Performance!J$3,Backup!$A:$A,Seller_Daily_Performance!$C4)"
+        },
+        {
+          "cell": "K4",
+          "formula": "COUNTIFS(Backup!$D:$D,$A4,Backup!$I:$I,Seller_Daily_Performance!K$3,Backup!$A:$A,Seller_Daily_Performance!$C4)"
+        },
+        {
+          "cell": "L4",
+          "formula": "COUNTIFS(Backup!$D:$D,$A4,Backup!$I:$I,Seller_Daily_Performance!L$3,Backup!$A:$A,Seller_Daily_Performance!$C4)"
+        },
+        {
+          "cell": "M4",
+          "formula": "COUNTIFS(Backup!$D:$D,$A4,Backup!$I:$I,Seller_Daily_Performance!M$3,Backup!$A:$A,Seller_Daily_Performance!$C4)"
+        },
+        {
+          "cell": "N4",
+          "formula": "COUNTIFS(Backup!$D:$D,$A4,Backup!$I:$I,Seller_Daily_Performance!N$3,Backup!$A:$A,Seller_Daily_Performance!$C4)"
+        },
+        {
+          "cell": "O4",
+          "formula": "COUNTIFS(Backup!$D:$D,$A4,Backup!$I:$I,Seller_Daily_Performance!O$3,Backup!$A:$A,Seller_Daily_Performance!$C4)"
+        },
+        {
+          "cell": "P4",
+          "formula": "COUNTIFS(Backup!$D:$D,$A4,Backup!$I:$I,Seller_Daily_Performance!P$3,Backup!$A:$A,Seller_Daily_Performance!$C4)"
+        },
+        {
+          "cell": "Q4",
+          "formula": "COUNTIFS(Backup!$D:$D,$A4,Backup!$I:$I,Seller_Daily_Performance!Q$3,Backup!$A:$A,Seller_Daily_Performance!$C4)"
+        },
+        {
+          "cell": "R4",
+          "formula": "COUNTIFS(Backup!$D:$D,$A4,Backup!$I:$I,Seller_Daily_Performance!R$3,Backup!$A:$A,Seller_Daily_Performance!$C4)"
+        },
+        {
+          "cell": "S4",
+          "formula": "COUNTIFS(Backup!$D:$D,$A4,Backup!$I:$I,Seller_Daily_Performance!S$3,Backup!$A:$A,Seller_Daily_Performance!$C4)"
+        },
+        {
+          "cell": "T4",
+          "formula": "COUNTIFS(Backup!$D:$D,$A4,Backup!$I:$I,Seller_Daily_Performance!T$3,Backup!$A:$A,Seller_Daily_Performance!$C4)"
+        },
+        {
+          "cell": "U4",
+          "formula": "SUM(J4:T4)"
+        },
+        {
+          "cell": "V4",
+          "formula": "IFERROR(AVERAGEIFS(Backup!P:P,Backup!D:D,Seller_Daily_Performance!A4,Backup!A:A,Seller_Daily_Performance!C4),0)"
+        },
+        {
+          "cell": "X4",
+          "formula": "I4=SUM(J4:T4)"
+        },
+        {
+          "cell": "Y4",
+          "formula": "SUM(J4:T4)-I4"
+        },
+        {
+          "cell": "B5",
+          "formula": "B4+1"
+        },
+        {
+          "cell": "C48",
+          "formula": "C4+1"
+        }
+      ],
+      "autofilter": {
+        "ref": "A3:Y1235"
+      },
+      "formats": [
+        "General",
+        "0",
+        "m/d/yy"
+      ]
+    },
+    {
+      "name": "KAM_Active_Inactive_Escalation",
+      "range": "A1:AO41",
+      "headers": [
+        {
+          "column": "A",
+          "value": null
+        },
+        {
+          "column": "B",
+          "value": "S.No"
+        },
+        {
+          "column": "C",
+          "value": "EMP_ID"
+        },
+        {
+          "column": "D",
+          "value": "EMP_NAME"
+        },
+        {
+          "column": "E",
+          "value": "COMPANY"
+        },
+        {
+          "column": "F",
+          "value": "Department"
+        },
+        {
+          "column": "G",
+          "value": "Groups Assigned"
+        },
+        {
+          "column": "H",
+          "value": "Active Groups"
+        },
+        {
+          "column": "I",
+          "value": "Inactive Groups"
+        },
+        {
+          "column": "J",
+          "value": "Active %"
+        },
+        {
+          "column": "K",
+          "value": "Inactive %"
+        },
+        {
+          "column": "L",
+          "value": 46266
+        },
+        {
+          "column": "M",
+          "value": 46267
+        },
+        {
+          "column": "N",
+          "value": 46268
+        },
+        {
+          "column": "O",
+          "value": 46269
+        },
+        {
+          "column": "P",
+          "value": 46270
+        },
+        {
+          "column": "Q",
+          "value": 46271
+        },
+        {
+          "column": "R",
+          "value": 46272
+        },
+        {
+          "column": "S",
+          "value": 46273
+        },
+        {
+          "column": "T",
+          "value": 46274
+        },
+        {
+          "column": "U",
+          "value": 46275
+        },
+        {
+          "column": "V",
+          "value": 46276
+        },
+        {
+          "column": "W",
+          "value": 46277
+        },
+        {
+          "column": "X",
+          "value": 46278
+        },
+        {
+          "column": "Y",
+          "value": 46279
+        },
+        {
+          "column": "Z",
+          "value": 46280
+        },
+        {
+          "column": "AA",
+          "value": 46281
+        },
+        {
+          "column": "AB",
+          "value": 46282
+        },
+        {
+          "column": "AC",
+          "value": 46283
+        },
+        {
+          "column": "AD",
+          "value": 46284
+        },
+        {
+          "column": "AE",
+          "value": 46285
+        },
+        {
+          "column": "AF",
+          "value": 46286
+        },
+        {
+          "column": "AG",
+          "value": 46287
+        },
+        {
+          "column": "AH",
+          "value": 46288
+        },
+        {
+          "column": "AI",
+          "value": 46289
+        },
+        {
+          "column": "AJ",
+          "value": 46290
+        },
+        {
+          "column": "AK",
+          "value": 46291
+        },
+        {
+          "column": "AL",
+          "value": 46292
+        },
+        {
+          "column": "AM",
+          "value": 46293
+        },
+        {
+          "column": "AN",
+          "value": 46294
+        },
+        {
+          "column": "AO",
+          "value": 46295
+        }
+      ],
+      "formulaPatterns": [
+        {
+          "cell": "S2",
+          "formula": "TEXT(S3,\"ddd\")"
+        },
+        {
+          "cell": "T2",
+          "formula": "TEXT(T3,\"ddd\")"
+        },
+        {
+          "cell": "U2",
+          "formula": "TEXT(U3,\"ddd\")"
+        },
+        {
+          "cell": "V2",
+          "formula": "TEXT(V3,\"ddd\")"
+        },
+        {
+          "cell": "W2",
+          "formula": "TEXT(W3,\"ddd\")"
+        },
+        {
+          "cell": "X2",
+          "formula": "TEXT(X3,\"ddd\")"
+        },
+        {
+          "cell": "Y2",
+          "formula": "TEXT(Y3,\"ddd\")"
+        },
+        {
+          "cell": "Z2",
+          "formula": "TEXT(Z3,\"ddd\")"
+        },
+        {
+          "cell": "AA2",
+          "formula": "TEXT(AA3,\"ddd\")"
+        },
+        {
+          "cell": "AB2",
+          "formula": "TEXT(AB3,\"ddd\")"
+        },
+        {
+          "cell": "AC2",
+          "formula": "TEXT(AC3,\"ddd\")"
+        },
+        {
+          "cell": "AD2",
+          "formula": "TEXT(AD3,\"ddd\")"
+        },
+        {
+          "cell": "AE2",
+          "formula": "TEXT(AE3,\"ddd\")"
+        },
+        {
+          "cell": "AF2",
+          "formula": "TEXT(AF3,\"ddd\")"
+        },
+        {
+          "cell": "AG2",
+          "formula": "TEXT(AG3,\"ddd\")"
+        },
+        {
+          "cell": "AH2",
+          "formula": "TEXT(AH3,\"ddd\")"
+        },
+        {
+          "cell": "AI2",
+          "formula": "TEXT(AI3,\"ddd\")"
+        },
+        {
+          "cell": "AJ2",
+          "formula": "TEXT(AJ3,\"ddd\")"
+        },
+        {
+          "cell": "AK2",
+          "formula": "TEXT(AK3,\"ddd\")"
+        },
+        {
+          "cell": "AL2",
+          "formula": "TEXT(AL3,\"ddd\")"
+        },
+        {
+          "cell": "AM2",
+          "formula": "TEXT(AM3,\"ddd\")"
+        },
+        {
+          "cell": "AN2",
+          "formula": "TEXT(AN3,\"ddd\")"
+        },
+        {
+          "cell": "AO2",
+          "formula": "TEXT(AO3,\"ddd\")"
+        },
+        {
+          "cell": "M3",
+          "formula": "L3+1"
+        },
+        {
+          "cell": "N3",
+          "formula": "M3+1"
+        },
+        {
+          "cell": "O3",
+          "formula": "N3+1"
+        },
+        {
+          "cell": "P3",
+          "formula": "O3+1"
+        },
+        {
+          "cell": "Q3",
+          "formula": "P3+1"
+        },
+        {
+          "cell": "R3",
+          "formula": "Q3+1"
+        },
+        {
+          "cell": "S3",
+          "formula": "R3+1"
+        },
+        {
+          "cell": "T3",
+          "formula": "S3+1"
+        },
+        {
+          "cell": "U3",
+          "formula": "T3+1"
+        },
+        {
+          "cell": "V3",
+          "formula": "U3+1"
+        },
+        {
+          "cell": "W3",
+          "formula": "V3+1"
+        },
+        {
+          "cell": "X3",
+          "formula": "W3+1"
+        },
+        {
+          "cell": "Y3",
+          "formula": "X3+1"
+        },
+        {
+          "cell": "Z3",
+          "formula": "Y3+1"
+        },
+        {
+          "cell": "AA3",
+          "formula": "Z3+1"
+        },
+        {
+          "cell": "AB3",
+          "formula": "AA3+1"
+        },
+        {
+          "cell": "AC3",
+          "formula": "AB3+1"
+        },
+        {
+          "cell": "AD3",
+          "formula": "AC3+1"
+        },
+        {
+          "cell": "AE3",
+          "formula": "AD3+1"
+        },
+        {
+          "cell": "AF3",
+          "formula": "AE3+1"
+        },
+        {
+          "cell": "AG3",
+          "formula": "AF3+1"
+        },
+        {
+          "cell": "AH3",
+          "formula": "AG3+1"
+        },
+        {
+          "cell": "AI3",
+          "formula": "AH3+1"
+        },
+        {
+          "cell": "AJ3",
+          "formula": "AI3+1"
+        },
+        {
+          "cell": "AK3",
+          "formula": "AJ3+1"
+        },
+        {
+          "cell": "AL3",
+          "formula": "AK3+1"
+        },
+        {
+          "cell": "AM3",
+          "formula": "AL3+1"
+        },
+        {
+          "cell": "AN3",
+          "formula": "AM3+1"
+        },
+        {
+          "cell": "AO3",
+          "formula": "AN3+1"
+        },
+        {
+          "cell": "A4",
+          "formula": "CONCATENATE(D4,\"-\",C4,\"-\",E4)"
+        },
+        {
+          "cell": "G4",
+          "formula": "COUNTIFS('Active_Inactive_Seller_Esca..'!B:B, KAM_Active_Inactive_Escalation!A4, 'Active_Inactive_Seller_Esca..'!E:E,\"<>\")"
+        },
+        {
+          "cell": "H4",
+          "formula": "COUNTIFS('Active_Inactive_Seller_Esca..'!B:B,KAM_Active_Inactive_Escalation!A4,'Active_Inactive_Seller_Esca..'!N:N,\"Active\")"
+        },
+        {
+          "cell": "I4",
+          "formula": "G4-H4"
+        },
+        {
+          "cell": "J4",
+          "formula": "IFERROR(H4/G4,0)"
+        },
+        {
+          "cell": "K4",
+          "formula": "IFERROR(I4/G4,0)"
+        },
+        {
+          "cell": "L4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!P:P)"
+        },
+        {
+          "cell": "M4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!Q:Q)"
+        },
+        {
+          "cell": "N4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!R:R)"
+        },
+        {
+          "cell": "O4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!S:S)"
+        },
+        {
+          "cell": "P4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!T:T)"
+        },
+        {
+          "cell": "Q4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!U:U)"
+        },
+        {
+          "cell": "R4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!V:V)"
+        },
+        {
+          "cell": "S4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!W:W)"
+        },
+        {
+          "cell": "T4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!X:X)"
+        },
+        {
+          "cell": "U4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!Y:Y)"
+        },
+        {
+          "cell": "V4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!Z:Z)"
+        },
+        {
+          "cell": "W4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!AA:AA)"
+        },
+        {
+          "cell": "X4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!AB:AB)"
+        },
+        {
+          "cell": "Y4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!AC:AC)"
+        },
+        {
+          "cell": "Z4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!AD:AD)"
+        },
+        {
+          "cell": "AA4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!AE:AE)"
+        },
+        {
+          "cell": "AB4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!AF:AF)"
+        },
+        {
+          "cell": "AC4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!AG:AG)"
+        },
+        {
+          "cell": "AD4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!AH:AH)"
+        },
+        {
+          "cell": "AE4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!AI:AI)"
+        },
+        {
+          "cell": "AF4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!AJ:AJ)"
+        },
+        {
+          "cell": "AG4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!AK:AK)"
+        },
+        {
+          "cell": "AH4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!AL:AL)"
+        },
+        {
+          "cell": "AI4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!AM:AM)"
+        },
+        {
+          "cell": "AJ4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!AN:AN)"
+        },
+        {
+          "cell": "AK4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!AO:AO)"
+        },
+        {
+          "cell": "AL4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!AP:AP)"
+        },
+        {
+          "cell": "AM4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!AQ:AQ)"
+        },
+        {
+          "cell": "AN4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!AR:AR)"
+        },
+        {
+          "cell": "AO4",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A4,'Active_Inactive_Seller_Esca..'!AS:AS)"
+        },
+        {
+          "cell": "B5",
+          "formula": "B4+1"
+        },
+        {
+          "cell": "G20",
+          "formula": "SUBTOTAL(9,G4:G19)"
+        },
+        {
+          "cell": "H20",
+          "formula": "SUBTOTAL(9,H4:H19)"
+        },
+        {
+          "cell": "I20",
+          "formula": "SUBTOTAL(9,I4:I19)"
+        },
+        {
+          "cell": "L20",
+          "formula": "SUBTOTAL(9,L4:L19)"
+        },
+        {
+          "cell": "M20",
+          "formula": "SUBTOTAL(9,M4:M19)"
+        },
+        {
+          "cell": "N20",
+          "formula": "SUBTOTAL(9,N4:N19)"
+        },
+        {
+          "cell": "O20",
+          "formula": "SUBTOTAL(9,O4:O19)"
+        },
+        {
+          "cell": "P20",
+          "formula": "SUBTOTAL(9,P4:P19)"
+        },
+        {
+          "cell": "Q20",
+          "formula": "SUBTOTAL(9,Q4:Q19)"
+        },
+        {
+          "cell": "R20",
+          "formula": "SUBTOTAL(9,R4:R19)"
+        },
+        {
+          "cell": "S20",
+          "formula": "SUBTOTAL(9,S4:S19)"
+        },
+        {
+          "cell": "T20",
+          "formula": "SUBTOTAL(9,T4:T19)"
+        },
+        {
+          "cell": "U20",
+          "formula": "SUBTOTAL(9,U4:U19)"
+        },
+        {
+          "cell": "V20",
+          "formula": "SUBTOTAL(9,V4:V19)"
+        },
+        {
+          "cell": "W20",
+          "formula": "SUBTOTAL(9,W4:W19)"
+        },
+        {
+          "cell": "X20",
+          "formula": "SUBTOTAL(9,X4:X19)"
+        },
+        {
+          "cell": "Y20",
+          "formula": "SUBTOTAL(9,Y4:Y19)"
+        },
+        {
+          "cell": "Z20",
+          "formula": "SUBTOTAL(9,Z4:Z19)"
+        },
+        {
+          "cell": "AA20",
+          "formula": "SUBTOTAL(9,AA4:AA19)"
+        },
+        {
+          "cell": "AB20",
+          "formula": "SUBTOTAL(9,AB4:AB19)"
+        },
+        {
+          "cell": "AC20",
+          "formula": "SUBTOTAL(9,AC4:AC19)"
+        },
+        {
+          "cell": "AD20",
+          "formula": "SUBTOTAL(9,AD4:AD19)"
+        },
+        {
+          "cell": "AE20",
+          "formula": "SUBTOTAL(9,AE4:AE19)"
+        },
+        {
+          "cell": "AF20",
+          "formula": "SUBTOTAL(9,AF4:AF19)"
+        },
+        {
+          "cell": "AG20",
+          "formula": "SUBTOTAL(9,AG4:AG19)"
+        },
+        {
+          "cell": "AH20",
+          "formula": "SUBTOTAL(9,AH4:AH19)"
+        },
+        {
+          "cell": "AI20",
+          "formula": "SUBTOTAL(9,AI4:AI19)"
+        },
+        {
+          "cell": "AJ20",
+          "formula": "SUBTOTAL(9,AJ4:AJ19)"
+        },
+        {
+          "cell": "AK20",
+          "formula": "SUBTOTAL(9,AK4:AK19)"
+        },
+        {
+          "cell": "AL20",
+          "formula": "SUBTOTAL(9,AL4:AL19)"
+        },
+        {
+          "cell": "AM20",
+          "formula": "SUBTOTAL(9,AM4:AM19)"
+        },
+        {
+          "cell": "AN20",
+          "formula": "SUBTOTAL(9,AN4:AN19)"
+        },
+        {
+          "cell": "AO20",
+          "formula": "SUBTOTAL(9,AO4:AO19)"
+        },
+        {
+          "cell": "L24",
+          "formula": "K24+1"
+        },
+        {
+          "cell": "I25",
+          "formula": "SUM(K25:AN25)"
+        },
+        {
+          "cell": "J25",
+          "formula": "AI25"
+        },
+        {
+          "cell": "K25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!AW:AW)"
+        },
+        {
+          "cell": "L25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!AX:AX)"
+        },
+        {
+          "cell": "M25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!AY:AY)"
+        },
+        {
+          "cell": "N25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!AZ:AZ)"
+        },
+        {
+          "cell": "O25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BA:BA)"
+        },
+        {
+          "cell": "P25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BB:BB)"
+        },
+        {
+          "cell": "Q25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BC:BC)"
+        },
+        {
+          "cell": "R25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BD:BD)"
+        },
+        {
+          "cell": "S25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BE:BE)"
+        },
+        {
+          "cell": "T25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BF:BF)"
+        },
+        {
+          "cell": "U25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BG:BG)"
+        },
+        {
+          "cell": "V25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BH:BH)"
+        },
+        {
+          "cell": "W25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BI:BI)"
+        },
+        {
+          "cell": "X25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BJ:BJ)"
+        },
+        {
+          "cell": "Y25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BK:BK)"
+        },
+        {
+          "cell": "Z25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BL:BL)"
+        },
+        {
+          "cell": "AA25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BM:BM)"
+        },
+        {
+          "cell": "AB25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BN:BN)"
+        },
+        {
+          "cell": "AC25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BO:BO)"
+        },
+        {
+          "cell": "AD25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BP:BP)"
+        },
+        {
+          "cell": "AE25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BQ:BQ)"
+        },
+        {
+          "cell": "AF25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BR:BR)"
+        },
+        {
+          "cell": "AG25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BS:BS)"
+        },
+        {
+          "cell": "AH25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BT:BT)"
+        },
+        {
+          "cell": "AI25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BU:BU)"
+        },
+        {
+          "cell": "AJ25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BV:BV)"
+        },
+        {
+          "cell": "AK25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BW:BW)"
+        },
+        {
+          "cell": "AL25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BX:BX)"
+        },
+        {
+          "cell": "AM25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BY:BY)"
+        },
+        {
+          "cell": "AN25",
+          "formula": "SUMIF('Active_Inactive_Seller_Esca..'!$B:$B,KAM_Active_Inactive_Escalation!$A25,'Active_Inactive_Seller_Esca..'!BZ:BZ)"
+        },
+        {
+          "cell": "J41",
+          "formula": "SUBTOTAL(9,J25:J40)"
+        },
+        {
+          "cell": "K41",
+          "formula": "SUBTOTAL(9,K25:K40)"
+        }
+      ],
+      "merges": [
+        {
+          "s": {
+            "c": 1,
+            "r": 22
+          },
+          "e": {
+            "c": 9,
+            "r": 22
+          }
+        }
+      ],
+      "formats": [
+        "General",
+        "0",
+        "[$-409]d/mmm;@",
+        "m/d/yy",
+        "0%",
+        "#,##0_ ;\\-#,##0\\ "
+      ]
+    },
+    {
+      "name": "Active_Inactive_Seller_Esca..",
+      "range": "A1:CB353",
+      "headers": [
+        {
+          "column": "A",
+          "value": null
+        },
+        {
+          "column": "B",
+          "value": null
+        },
+        {
+          "column": "C",
+          "value": "S.No"
+        },
+        {
+          "column": "D",
+          "value": "SELLER CUSTOMER ID"
+        },
+        {
+          "column": "E",
+          "value": "SELLER COMPANY NAME"
+        },
+        {
+          "column": "F",
+          "value": "Actual Seller Company Name"
+        },
+        {
+          "column": "G",
+          "value": "SELLER NAME"
+        },
+        {
+          "column": "H",
+          "value": "Type"
+        },
+        {
+          "column": "I",
+          "value": "EMP ID"
+        },
+        {
+          "column": "J",
+          "value": "ASSIGNED"
+        },
+        {
+          "column": "K",
+          "value": "COMPANY"
+        },
+        {
+          "column": "L",
+          "value": "SALE POC NAME"
+        },
+        {
+          "column": "M",
+          "value": "LOCATION"
+        },
+        {
+          "column": "N",
+          "value": "Active / In_Active"
+        },
+        {
+          "column": "O",
+          "value": "MTD Active"
+        },
+        {
+          "column": "P",
+          "value": 46266
+        },
+        {
+          "column": "Q",
+          "value": 46267
+        },
+        {
+          "column": "R",
+          "value": 46268
+        },
+        {
+          "column": "S",
+          "value": 46269
+        },
+        {
+          "column": "T",
+          "value": 46270
+        },
+        {
+          "column": "U",
+          "value": 46271
+        },
+        {
+          "column": "V",
+          "value": 46272
+        },
+        {
+          "column": "W",
+          "value": 46273
+        },
+        {
+          "column": "X",
+          "value": 46274
+        },
+        {
+          "column": "Y",
+          "value": 46275
+        },
+        {
+          "column": "Z",
+          "value": 46276
+        },
+        {
+          "column": "AA",
+          "value": 46277
+        },
+        {
+          "column": "AB",
+          "value": 46278
+        },
+        {
+          "column": "AC",
+          "value": 46279
+        },
+        {
+          "column": "AD",
+          "value": 46280
+        },
+        {
+          "column": "AE",
+          "value": 46281
+        },
+        {
+          "column": "AF",
+          "value": 46282
+        },
+        {
+          "column": "AG",
+          "value": 46283
+        },
+        {
+          "column": "AH",
+          "value": 46284
+        },
+        {
+          "column": "AI",
+          "value": 46285
+        },
+        {
+          "column": "AJ",
+          "value": 46286
+        },
+        {
+          "column": "AK",
+          "value": 46287
+        },
+        {
+          "column": "AL",
+          "value": 46288
+        },
+        {
+          "column": "AM",
+          "value": 46289
+        },
+        {
+          "column": "AN",
+          "value": 46290
+        },
+        {
+          "column": "AO",
+          "value": 46291
+        },
+        {
+          "column": "AP",
+          "value": 46292
+        },
+        {
+          "column": "AQ",
+          "value": 46293
+        },
+        {
+          "column": "AR",
+          "value": 46294
+        },
+        {
+          "column": "AS",
+          "value": 46295
+        },
+        {
+          "column": "AT",
+          "value": 46296
+        },
+        {
+          "column": "AU",
+          "value": "MTD Aug 2026"
+        },
+        {
+          "column": "AV",
+          "value": null
+        },
+        {
+          "column": "AW",
+          "value": 46266
+        },
+        {
+          "column": "AX",
+          "value": 46267
+        },
+        {
+          "column": "AY",
+          "value": 46268
+        },
+        {
+          "column": "AZ",
+          "value": 46269
+        },
+        {
+          "column": "BA",
+          "value": 46270
+        },
+        {
+          "column": "BB",
+          "value": 46271
+        },
+        {
+          "column": "BC",
+          "value": 46272
+        },
+        {
+          "column": "BD",
+          "value": 46273
+        },
+        {
+          "column": "BE",
+          "value": 46274
+        },
+        {
+          "column": "BF",
+          "value": 46275
+        },
+        {
+          "column": "BG",
+          "value": 46276
+        },
+        {
+          "column": "BH",
+          "value": 46277
+        },
+        {
+          "column": "BI",
+          "value": 46278
+        },
+        {
+          "column": "BJ",
+          "value": 46279
+        },
+        {
+          "column": "BK",
+          "value": 46280
+        },
+        {
+          "column": "BL",
+          "value": 46281
+        },
+        {
+          "column": "BM",
+          "value": 46282
+        },
+        {
+          "column": "BN",
+          "value": 46283
+        },
+        {
+          "column": "BO",
+          "value": 46284
+        },
+        {
+          "column": "BP",
+          "value": 46285
+        },
+        {
+          "column": "BQ",
+          "value": 46286
+        },
+        {
+          "column": "BR",
+          "value": 46287
+        },
+        {
+          "column": "BS",
+          "value": 46288
+        },
+        {
+          "column": "BT",
+          "value": 46289
+        },
+        {
+          "column": "BU",
+          "value": 46290
+        },
+        {
+          "column": "BV",
+          "value": 46291
+        },
+        {
+          "column": "BW",
+          "value": 46292
+        },
+        {
+          "column": "BX",
+          "value": 46293
+        },
+        {
+          "column": "BY",
+          "value": 46294
+        },
+        {
+          "column": "BZ",
+          "value": 46295
+        },
+        {
+          "column": "CA",
+          "value": 46296
+        },
+        {
+          "column": "CB",
+          "value": "MTD Aug 2026"
+        }
+      ],
+      "formulaPatterns": [
+        {
+          "cell": "D2",
+          "formula": "COUNT(D4:D351)"
+        },
+        {
+          "cell": "O2",
+          "formula": "SUBTOTAL(9,O4:O351)"
+        },
+        {
+          "cell": "P2",
+          "formula": "SUBTOTAL(9,P4:P351)"
+        },
+        {
+          "cell": "Q2",
+          "formula": "SUBTOTAL(9,Q4:Q351)"
+        },
+        {
+          "cell": "R2",
+          "formula": "SUBTOTAL(9,R4:R351)"
+        },
+        {
+          "cell": "S2",
+          "formula": "SUBTOTAL(9,S4:S351)"
+        },
+        {
+          "cell": "T2",
+          "formula": "SUBTOTAL(9,T4:T351)"
+        },
+        {
+          "cell": "U2",
+          "formula": "SUBTOTAL(9,U4:U351)"
+        },
+        {
+          "cell": "V2",
+          "formula": "SUBTOTAL(9,V4:V351)"
+        },
+        {
+          "cell": "W2",
+          "formula": "SUBTOTAL(9,W4:W351)"
+        },
+        {
+          "cell": "X2",
+          "formula": "SUBTOTAL(9,X4:X351)"
+        },
+        {
+          "cell": "Y2",
+          "formula": "SUBTOTAL(9,Y4:Y351)"
+        },
+        {
+          "cell": "Z2",
+          "formula": "SUBTOTAL(9,Z4:Z351)"
+        },
+        {
+          "cell": "AA2",
+          "formula": "SUBTOTAL(9,AA4:AA351)"
+        },
+        {
+          "cell": "AB2",
+          "formula": "SUBTOTAL(9,AB4:AB351)"
+        },
+        {
+          "cell": "AC2",
+          "formula": "SUBTOTAL(9,AC4:AC351)"
+        },
+        {
+          "cell": "AD2",
+          "formula": "SUBTOTAL(9,AD4:AD351)"
+        },
+        {
+          "cell": "AE2",
+          "formula": "SUBTOTAL(9,AE4:AE351)"
+        },
+        {
+          "cell": "AF2",
+          "formula": "SUBTOTAL(9,AF4:AF351)"
+        },
+        {
+          "cell": "AG2",
+          "formula": "SUBTOTAL(9,AG4:AG351)"
+        },
+        {
+          "cell": "AH2",
+          "formula": "SUBTOTAL(9,AH4:AH351)"
+        },
+        {
+          "cell": "AI2",
+          "formula": "SUBTOTAL(9,AI4:AI351)"
+        },
+        {
+          "cell": "AJ2",
+          "formula": "SUBTOTAL(9,AJ4:AJ351)"
+        },
+        {
+          "cell": "AK2",
+          "formula": "SUBTOTAL(9,AK4:AK351)"
+        },
+        {
+          "cell": "AL2",
+          "formula": "SUBTOTAL(9,AL4:AL351)"
+        },
+        {
+          "cell": "AM2",
+          "formula": "SUBTOTAL(9,AM4:AM351)"
+        },
+        {
+          "cell": "AN2",
+          "formula": "SUBTOTAL(9,AN4:AN351)"
+        },
+        {
+          "cell": "AO2",
+          "formula": "SUBTOTAL(9,AO4:AO351)"
+        },
+        {
+          "cell": "AP2",
+          "formula": "SUBTOTAL(9,AP4:AP351)"
+        },
+        {
+          "cell": "AQ2",
+          "formula": "SUBTOTAL(9,AQ4:AQ351)"
+        },
+        {
+          "cell": "AR2",
+          "formula": "SUBTOTAL(9,AR4:AR351)"
+        },
+        {
+          "cell": "AS2",
+          "formula": "SUBTOTAL(9,AS4:AS351)"
+        },
+        {
+          "cell": "AT2",
+          "formula": "SUBTOTAL(9,AT4:AT351)"
+        },
+        {
+          "cell": "AU2",
+          "formula": "SUBTOTAL(9,AU4:AU351)"
+        },
+        {
+          "cell": "AW2",
+          "formula": "SUBTOTAL(9,AW4:AW351)"
+        },
+        {
+          "cell": "AX2",
+          "formula": "SUBTOTAL(9,AX4:AX351)"
+        },
+        {
+          "cell": "AY2",
+          "formula": "SUBTOTAL(9,AY4:AY351)"
+        },
+        {
+          "cell": "AZ2",
+          "formula": "SUBTOTAL(9,AZ4:AZ351)"
+        },
+        {
+          "cell": "BA2",
+          "formula": "SUBTOTAL(9,BA4:BA351)"
+        },
+        {
+          "cell": "BB2",
+          "formula": "SUBTOTAL(9,BB4:BB351)"
+        },
+        {
+          "cell": "BC2",
+          "formula": "SUBTOTAL(9,BC4:BC351)"
+        },
+        {
+          "cell": "BD2",
+          "formula": "SUBTOTAL(9,BD4:BD351)"
+        },
+        {
+          "cell": "BE2",
+          "formula": "SUBTOTAL(9,BE4:BE351)"
+        },
+        {
+          "cell": "BF2",
+          "formula": "SUBTOTAL(9,BF4:BF351)"
+        },
+        {
+          "cell": "BG2",
+          "formula": "SUBTOTAL(9,BG4:BG351)"
+        },
+        {
+          "cell": "BH2",
+          "formula": "SUBTOTAL(9,BH4:BH351)"
+        },
+        {
+          "cell": "BI2",
+          "formula": "SUBTOTAL(9,BI4:BI351)"
+        },
+        {
+          "cell": "BJ2",
+          "formula": "SUBTOTAL(9,BJ4:BJ351)"
+        },
+        {
+          "cell": "BK2",
+          "formula": "SUBTOTAL(9,BK4:BK351)"
+        },
+        {
+          "cell": "BL2",
+          "formula": "SUBTOTAL(9,BL4:BL351)"
+        },
+        {
+          "cell": "BM2",
+          "formula": "SUBTOTAL(9,BM4:BM351)"
+        },
+        {
+          "cell": "BN2",
+          "formula": "SUBTOTAL(9,BN4:BN351)"
+        },
+        {
+          "cell": "BO2",
+          "formula": "SUBTOTAL(9,BO4:BO351)"
+        },
+        {
+          "cell": "BP2",
+          "formula": "SUBTOTAL(9,BP4:BP351)"
+        },
+        {
+          "cell": "BQ2",
+          "formula": "SUBTOTAL(9,BQ4:BQ351)"
+        },
+        {
+          "cell": "BR2",
+          "formula": "SUBTOTAL(9,BR4:BR351)"
+        },
+        {
+          "cell": "BS2",
+          "formula": "SUBTOTAL(9,BS4:BS351)"
+        },
+        {
+          "cell": "BT2",
+          "formula": "SUBTOTAL(9,BT4:BT351)"
+        },
+        {
+          "cell": "BU2",
+          "formula": "SUBTOTAL(9,BU4:BU351)"
+        },
+        {
+          "cell": "BV2",
+          "formula": "SUBTOTAL(9,BV4:BV351)"
+        },
+        {
+          "cell": "BW2",
+          "formula": "SUBTOTAL(9,BW4:BW351)"
+        },
+        {
+          "cell": "BX2",
+          "formula": "SUBTOTAL(9,BX4:BX351)"
+        },
+        {
+          "cell": "BY2",
+          "formula": "SUBTOTAL(9,BY4:BY351)"
+        },
+        {
+          "cell": "BZ2",
+          "formula": "SUBTOTAL(9,BZ4:BZ351)"
+        },
+        {
+          "cell": "CA2",
+          "formula": "SUBTOTAL(9,CA4:CA351)"
+        },
+        {
+          "cell": "CB2",
+          "formula": "SUBTOTAL(9,CB4:CB351)"
+        },
+        {
+          "cell": "Q3",
+          "formula": "P3+1"
+        },
+        {
+          "cell": "R3",
+          "formula": "Q3+1"
+        },
+        {
+          "cell": "S3",
+          "formula": "R3+1"
+        },
+        {
+          "cell": "T3",
+          "formula": "S3+1"
+        },
+        {
+          "cell": "U3",
+          "formula": "T3+1"
+        },
+        {
+          "cell": "V3",
+          "formula": "U3+1"
+        },
+        {
+          "cell": "W3",
+          "formula": "V3+1"
+        },
+        {
+          "cell": "X3",
+          "formula": "W3+1"
+        },
+        {
+          "cell": "Y3",
+          "formula": "X3+1"
+        },
+        {
+          "cell": "Z3",
+          "formula": "Y3+1"
+        },
+        {
+          "cell": "AA3",
+          "formula": "Z3+1"
+        },
+        {
+          "cell": "AB3",
+          "formula": "AA3+1"
+        },
+        {
+          "cell": "AC3",
+          "formula": "AB3+1"
+        },
+        {
+          "cell": "AD3",
+          "formula": "AC3+1"
+        },
+        {
+          "cell": "AE3",
+          "formula": "AD3+1"
+        },
+        {
+          "cell": "AF3",
+          "formula": "AE3+1"
+        },
+        {
+          "cell": "AG3",
+          "formula": "AF3+1"
+        },
+        {
+          "cell": "AH3",
+          "formula": "AG3+1"
+        },
+        {
+          "cell": "AI3",
+          "formula": "AH3+1"
+        },
+        {
+          "cell": "AJ3",
+          "formula": "AI3+1"
+        },
+        {
+          "cell": "AK3",
+          "formula": "AJ3+1"
+        },
+        {
+          "cell": "AL3",
+          "formula": "AK3+1"
+        },
+        {
+          "cell": "AM3",
+          "formula": "AL3+1"
+        },
+        {
+          "cell": "AN3",
+          "formula": "AM3+1"
+        },
+        {
+          "cell": "AO3",
+          "formula": "AN3+1"
+        },
+        {
+          "cell": "AP3",
+          "formula": "AO3+1"
+        },
+        {
+          "cell": "AQ3",
+          "formula": "AP3+1"
+        },
+        {
+          "cell": "AR3",
+          "formula": "AQ3+1"
+        },
+        {
+          "cell": "AS3",
+          "formula": "AR3+1"
+        },
+        {
+          "cell": "AT3",
+          "formula": "AS3+1"
+        },
+        {
+          "cell": "AX3",
+          "formula": "AW3+1"
+        },
+        {
+          "cell": "AY3",
+          "formula": "AX3+1"
+        },
+        {
+          "cell": "AZ3",
+          "formula": "AY3+1"
+        },
+        {
+          "cell": "BA3",
+          "formula": "AZ3+1"
+        },
+        {
+          "cell": "BB3",
+          "formula": "BA3+1"
+        },
+        {
+          "cell": "BC3",
+          "formula": "BB3+1"
+        },
+        {
+          "cell": "BD3",
+          "formula": "BC3+1"
+        },
+        {
+          "cell": "BE3",
+          "formula": "BD3+1"
+        },
+        {
+          "cell": "BF3",
+          "formula": "BE3+1"
+        },
+        {
+          "cell": "BG3",
+          "formula": "BF3+1"
+        },
+        {
+          "cell": "BH3",
+          "formula": "BG3+1"
+        },
+        {
+          "cell": "BI3",
+          "formula": "BH3+1"
+        },
+        {
+          "cell": "BJ3",
+          "formula": "BI3+1"
+        },
+        {
+          "cell": "BK3",
+          "formula": "BJ3+1"
+        },
+        {
+          "cell": "BL3",
+          "formula": "BK3+1"
+        },
+        {
+          "cell": "BM3",
+          "formula": "BL3+1"
+        },
+        {
+          "cell": "BN3",
+          "formula": "BM3+1"
+        },
+        {
+          "cell": "BO3",
+          "formula": "BN3+1"
+        },
+        {
+          "cell": "BP3",
+          "formula": "BO3+1"
+        },
+        {
+          "cell": "BQ3",
+          "formula": "BP3+1"
+        },
+        {
+          "cell": "BR3",
+          "formula": "BQ3+1"
+        },
+        {
+          "cell": "BS3",
+          "formula": "BR3+1"
+        },
+        {
+          "cell": "BT3",
+          "formula": "BS3+1"
+        },
+        {
+          "cell": "BU3",
+          "formula": "BT3+1"
+        },
+        {
+          "cell": "BV3",
+          "formula": "BU3+1"
+        },
+        {
+          "cell": "BW3",
+          "formula": "BV3+1"
+        },
+        {
+          "cell": "BX3",
+          "formula": "BW3+1"
+        },
+        {
+          "cell": "BY3",
+          "formula": "BX3+1"
+        },
+        {
+          "cell": "BZ3",
+          "formula": "BY3+1"
+        },
+        {
+          "cell": "CA3",
+          "formula": "BZ3+1"
+        },
+        {
+          "cell": "A4",
+          "formula": "CONCATENATE(E4,\"-\",D4,\"-\",H4)"
+        },
+        {
+          "cell": "B4",
+          "formula": "CONCATENATE(J4,\"-\",I4,\"-\",K4)"
+        },
+        {
+          "cell": "N4",
+          "formula": "IF(O4>0.05,\"Active\",\"In-Active\")"
+        },
+        {
+          "cell": "O4",
+          "formula": "SUM(P4:AT4)"
+        },
+        {
+          "cell": "Y4",
+          "formula": "V4"
+        },
+        {
+          "cell": "CB4",
+          "formula": "SUM(AW4:CA4)"
+        },
+        {
+          "cell": "C5",
+          "formula": "C4+1"
+        }
+      ],
+      "autofilter": {
+        "ref": "A3:CB3"
+      },
+      "formats": [
+        "General",
+        "[$-409]d/mmm;@"
+      ]
+    },
+    {
+      "name": "AI_MTD_Performance",
+      "range": "B1:O34",
+      "headers": [],
+      "formulaPatterns": [
+        {
+          "cell": "D2",
+          "formula": "KAM_MTD_Performance!G3"
+        },
+        {
+          "cell": "D4",
+          "formula": "SUM(Backup!E3:E1048576)"
+        },
+        {
+          "cell": "D5",
+          "formula": "COUNTA(Backup!B3:B1048576)"
+        },
+        {
+          "cell": "D6",
+          "formula": "COUNTIFS(Backup!C:C,AI_MTD_Performance!B6)"
+        },
+        {
+          "cell": "D7",
+          "formula": "D5-D6"
+        },
+        {
+          "cell": "H7",
+          "formula": "KAM_Active_Inactive_Escalation!H20"
+        },
+        {
+          "cell": "K7",
+          "formula": "+G7-H7"
+        },
+        {
+          "cell": "C11",
+          "formula": "D5"
+        },
+        {
+          "cell": "D11",
+          "formula": "IFERROR(C11/$C$14,0)"
+        },
+        {
+          "cell": "C14",
+          "formula": "SUM(C11:C13)-C11"
+        },
+        {
+          "cell": "C18",
+          "formula": "COUNTIFS(Backup!$C:$C, AI_MTD_Performance!$B18,  Backup!$G:$G, C$17)"
+        },
+        {
+          "cell": "D18",
+          "formula": "COUNTIFS(Backup!$C:$C, AI_MTD_Performance!$B18,  Backup!$G:$G, D$17)"
+        },
+        {
+          "cell": "E18",
+          "formula": "COUNTIFS(Backup!$C:$C, AI_MTD_Performance!$B18,  Backup!$G:$G, E$17)"
+        },
+        {
+          "cell": "F18",
+          "formula": "COUNTIFS(Backup!$C:$C, AI_MTD_Performance!$B18,  Backup!$G:$G, F$17)"
+        },
+        {
+          "cell": "G18",
+          "formula": "COUNTIFS(Backup!$C:$C, AI_MTD_Performance!$B18,  Backup!$G:$G, G$17)"
+        },
+        {
+          "cell": "H18",
+          "formula": "COUNTIFS(Backup!$C:$C, AI_MTD_Performance!$B18,  Backup!$G:$G, H$17)"
+        },
+        {
+          "cell": "I18",
+          "formula": "SUM(C18:E18)"
+        },
+        {
+          "cell": "C20",
+          "formula": "SUM(C18:C19)"
+        },
+        {
+          "cell": "D20",
+          "formula": "SUM(D18:D19)"
+        },
+        {
+          "cell": "E20",
+          "formula": "SUM(E18:E19)"
+        },
+        {
+          "cell": "F20",
+          "formula": "SUM(F18:F19)"
+        },
+        {
+          "cell": "G20",
+          "formula": "SUM(G18:G19)"
+        },
+        {
+          "cell": "H20",
+          "formula": "SUM(H18:H19)"
+        },
+        {
+          "cell": "I20",
+          "formula": "SUM(I18:I19)"
+        },
+        {
+          "cell": "C24",
+          "formula": "COUNTIF(Backup!I:I,AI_MTD_Performance!B24)"
+        },
+        {
+          "cell": "D24",
+          "formula": "IFERROR(C24/$D$5,0)"
+        }
+      ],
+      "merges": [
+        {
+          "s": {
+            "c": 6,
+            "r": 4
+          },
+          "e": {
+            "c": 12,
+            "r": 4
+          }
+        }
+      ],
+      "formats": [
+        "General",
+        "m/d/yy",
+        "0.0%",
+        "0%"
+      ]
+    },
+    {
+      "name": "Backup",
+      "range": "A1:Y13114",
+      "headers": [
+        {
+          "column": "A",
+          "value": "Date"
+        },
+        {
+          "column": "B",
+          "value": "Group Name"
+        },
+        {
+          "column": "C",
+          "value": "Processing Method"
+        },
+        {
+          "column": "D",
+          "value": "Seller/Employee"
+        },
+        {
+          "column": "E",
+          "value": "No. of Escalation Entries"
+        },
+        {
+          "column": "F",
+          "value": "AWB Number"
+        },
+        {
+          "column": "G",
+          "value": "Mile Stage"
+        },
+        {
+          "column": "H",
+          "value": "Category / Remarks"
+        },
+        {
+          "column": "I",
+          "value": "Current Status"
+        },
+        {
+          "column": "J",
+          "value": "Esc. Raised"
+        },
+        {
+          "column": "K",
+          "value": "Esc. Closed"
+        },
+        {
+          "column": "L",
+          "value": "Revert TAT"
+        },
+        {
+          "column": "M",
+          "value": "Resolution TAT"
+        },
+        {
+          "column": "N",
+          "value": "Revert Date"
+        },
+        {
+          "column": "O",
+          "value": "Resolution Date"
+        },
+        {
+          "column": "P",
+          "value": "Revert TAT Minut"
+        },
+        {
+          "column": "Q",
+          "value": "Manifested Date"
+        },
+        {
+          "column": "R",
+          "value": "Pickup"
+        },
+        {
+          "column": "S",
+          "value": "Delivered"
+        },
+        {
+          "column": "T",
+          "value": "Ageing"
+        },
+        {
+          "column": "U",
+          "value": "EDD"
+        },
+        {
+          "column": "V",
+          "value": "IN TAT / OUT TAT"
+        },
+        {
+          "column": "W",
+          "value": "Ops Remark"
+        },
+        {
+          "column": "X",
+          "value": null
+        },
+        {
+          "column": "Y",
+          "value": null
+        }
+      ],
+      "formulaPatterns": [
+        {
+          "cell": "E1",
+          "formula": "SUBTOTAL(9,E3:E1048576)"
+        },
+        {
+          "cell": "F1",
+          "formula": "SUBTOTAL(3,F3:F1048576)"
+        },
+        {
+          "cell": "P3",
+          "formula": "IFERROR(IF(ISNUMBER(SEARCH(\"Hr\", L3)), IFERROR(MID(L3, 1, SEARCH(\"Hr\", L3)-1)+0, 0)*60, 0) + IFERROR(IF(ISNUMBER(SEARCH(\"Min\", L3)), MID(L3, IFERROR(SEARCH(\"Hr\", L3)+2, 1), IFERROR(SEARCH(\"Min\", L3)-IFERROR(SEARCH(\"Hr\", L3)+2, 1), LEN(L3)))+0, 0), 0), 0)"
+        },
+        {
+          "cell": "T3",
+          "formula": "IF(OR(S3=\"\",R3=\"\"),\"\",S3-R3)"
+        },
+        {
+          "cell": "X3",
+          "formula": "LEN(F3)"
+        },
+        {
+          "cell": "V4",
+          "formula": "IF(U4>=S4,\"IN TAT\",\"OUT TAT\")"
+        },
+        {
+          "cell": "W82",
+          "formula": "TODAY()-Q82"
+        }
+      ],
+      "formats": [
+        "General",
+        "m/d/yy",
+        "0"
+      ]
+    }
+  ]
+}

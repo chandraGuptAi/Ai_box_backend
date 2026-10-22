@@ -52,6 +52,7 @@ from app.prompts.report_intent import (detect_intent, scope_analysis, selected_t
                                       report_charts, deterministic_narrative, shape_narrative, relevant_metrics)
 from app.prompts.registry import get_report_definition, list_report_definitions
 from app.services.deepseek_service import DeepSeekService
+from app.services.report_activity import write_report_activity
 from app.services.shipment_insights import build_insights, headline_cards, insights_narrative
 from app.services.report_evidence import (NarrativeRepairError, repair_unsupported_narrative,
                                           safe_rejections, validate_numerical_claims)
@@ -496,11 +497,43 @@ class ReportService:
                               user_id: str | None = None) -> ReportResponse:
         report_token = report_id_var.set(uuid.uuid4().hex)
         request_token = request_id_var.set(request_id_var.get() or uuid.uuid4().hex)
+        started_at = datetime.now(timezone.utc)
+        started = time.monotonic()
+        report = None
+        outcome, error_code = "cancelled", None
         try:
-            return await self._generate_report(request, shipment_credential=shipment_credential, user_id=user_id)
+            report = await self._generate_report(request, shipment_credential=shipment_credential, user_id=user_id)
+            outcome = "generated"
+            return report
+        except Exception as exc:
+            outcome = "failed"
+            error_code = exc.code if isinstance(exc, AppError) else (
+                f"http_{exc.status_code}" if isinstance(exc, HTTPException) else "internal_error")
+            raise
         finally:
-            report_id_var.reset(report_token)
-            request_id_var.reset(request_token)
+            try:
+                completed_at = datetime.now(timezone.utc)
+                write_report_activity({
+                    "event": "report_generation", "request_id": request_id_var.get(),
+                    "report_id": report.report_id if report else report_id_var.get(),
+                    "seller_id": user_id, "user_id": user_id,
+                    "customer_id": report.customer_id if report else request.customer_id,
+                    "company_name": request.company_name,
+                    "prompt": request.prompt, "report_type": request.report_type, "source": request.source,
+                    "started_at": started_at.isoformat(), "completed_at": completed_at.isoformat(),
+                    "started_at_ist": started_at.astimezone(_IST).isoformat(),
+                    "duration_ms": round((time.monotonic() - started) * 1000),
+                    "outcome": outcome, "error_code": error_code,
+                    "filters": request.filters.model_dump(mode="json") if request.filters else None,
+                    "date_range": request.date_range, "allow_partial": request.allow_partial,
+                    "is_follow_up": request.previous_report is not None,
+                    "previous_report_id": (request.previous_report or {}).get("report_id"),
+                    "records_analyzed": report.records_analyzed if report else None,
+                    "generation": report.generation if report else None,
+                })
+            finally:
+                report_id_var.reset(report_token)
+                request_id_var.reset(request_token)
 
     async def _generate_report(self, request: ReportRequest, *, shipment_credential: str | None = None,
                                user_id: str | None = None) -> ReportResponse:

@@ -27,3 +27,11 @@ def coverage_audit(monkeypatch):
     records: list[dict] = []
     monkeypatch.setattr(report_service, "write_coverage_audit", records.append)
     return records
+
+
+@pytest.fixture(autouse=True)
+def report_activity_audit(monkeypatch):
+    """Keep synthetic generation history out of the seller activity file."""
+    records = []
+    monkeypatch.setattr(report_service, "write_report_activity", records.append)
+    return records

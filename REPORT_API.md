@@ -1,5 +1,16 @@
 # Structured report API (version 2)
 
+Seller generation tracking is saved privately in `output/report_generation_audit.jsonl`
+(5 MB rotation, five backups). Each generation attempt that enters the report service records
+the full prompt, seller/user ID from `X-User-Id`, customer ID, company name, report/request IDs,
+report type, source, start/completion timestamps in UTC, start time in IST, duration,
+filters, date range, partial-report option, follow-up flag/previous report ID, outcome
+(`generated`, `failed`, or `cancelled`), safe error code, analyzed count and generation metadata.
+Seller ID is null when payload generation has no user header; customer ID is kept separately.
+Tokens, shipment rows and exception text are excluded. This file contains seller prompts;
+it is separate from coverage diagnostics and is not served over HTTP.
+Requests rejected before entering the service (authentication/body validation) are excluded.
+
 POST `/api/reports/generate` keeps the existing request shape. Example:
 
 ```json

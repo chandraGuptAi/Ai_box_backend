@@ -1,0 +1,280 @@
+[
+  {
+    "source": "Escalation_Tester.py",
+    "sha256": "c02796dc7fc1e7ff5955a1bfee95394eb1b577efdeb96ff6df8a9f638a97a2e4",
+    "classifications": [
+      {
+        "text": "12345678 Delivered",
+        "status": "Delivered",
+        "closed": "2:00 PM",
+        "mile": "Last Mile",
+        "category": "Delivered / Delivery Confirmation"
+      },
+      {
+        "text": "12345678 not delivered",
+        "status": "Undelivered (Generic)",
+        "closed": "-",
+        "mile": "Last Mile",
+        "category": "12345678 not delivered"
+      },
+      {
+        "text": "12345678 out for delivery",
+        "status": "Delivered",
+        "closed": "2:00 PM",
+        "mile": "Last Mile",
+        "category": "Delivered / Delivery Confirmation"
+      },
+      {
+        "text": "12345678 OFD",
+        "status": "Out For Delivery",
+        "closed": "-",
+        "mile": "Last Mile",
+        "category": "12345678 OFD"
+      },
+      {
+        "text": "12345678 rto revoke",
+        "status": "RTO Escalation",
+        "closed": "-",
+        "mile": "Last Mile",
+        "category": "RTO Revoke / Fake Remark / Self Collect"
+      },
+      {
+        "text": "12345678 pickup pending",
+        "status": "Undelivered (Generic)",
+        "closed": "-",
+        "mile": "First Mile",
+        "category": "Pickup Pending (3 Days)"
+      },
+      {
+        "text": "12345678 urgent pickup",
+        "status": "Undelivered (Generic)",
+        "closed": "-",
+        "mile": "First Mile",
+        "category": "Urgent Pickup Request"
+      },
+      {
+        "text": "12345678 in transit",
+        "status": "In Transit",
+        "closed": "-",
+        "mile": "In-Transit",
+        "category": "12345678 in transit"
+      },
+      {
+        "text": "12345678 cancel shipment",
+        "status": "Cancellation Request",
+        "closed": "-",
+        "mile": "Last Mile",
+        "category": "Cancellation Request"
+      },
+      {
+        "text": "12345678 lost",
+        "status": "Shipment Missing",
+        "closed": "-",
+        "mile": "Last Mile",
+        "category": "12345678 lost"
+      },
+      {
+        "text": "12345678 pod",
+        "status": "Undelivered (Generic)",
+        "closed": "-",
+        "mile": "Last Mile",
+        "category": "POD / Delivery Proof Request"
+      },
+      {
+        "text": "12345678 hello",
+        "status": "Undelivered (Generic)",
+        "closed": "-",
+        "mile": "Last Mile",
+        "category": "12345678 hello"
+      },
+      {
+        "text": "12345678 high value 25k",
+        "status": "Undelivered (Generic)",
+        "closed": "-",
+        "mile": "Last Mile",
+        "category": "High Value Shipment Delay"
+      },
+      {
+        "text": "12345678 urgent delivery delay",
+        "status": "Delivered",
+        "closed": "2:00 PM",
+        "mile": "Last Mile",
+        "category": "Shipping Related \u2013 Urgent Delivery (Delay & Misroute)"
+      }
+    ],
+    "tats": [
+      {
+        "raised": "11:50 PM",
+        "revert": "12:10 AM",
+        "closed": "-",
+        "result": [
+          "20 Min",
+          "-",
+          "09-Oct-2026",
+          "-"
+        ]
+      },
+      {
+        "raised": "2:00 PM",
+        "revert": "3:10 PM",
+        "closed": "2:00 PM",
+        "result": [
+          "1 Hr 10 Min",
+          "0 Min",
+          "08-Oct-2026",
+          "08-Oct-2026"
+        ]
+      },
+      {
+        "raised": "2:00 PM",
+        "revert": "-",
+        "closed": "-",
+        "result": [
+          "-",
+          "-",
+          "-",
+          "-"
+        ]
+      }
+    ]
+  },
+  {
+    "source": "Escalatio_Tester_Mtd.py",
+    "sha256": "fc13d846fe0e8ba9874fb3c174802ccda8976c58817607372db3640e002b79ad",
+    "classifications": [
+      {
+        "text": "12345678 Delivered",
+        "status": "Delivered",
+        "closed": "2:00 PM",
+        "mile": "Last Mile",
+        "category": "Delivered / Delivery Confirmation"
+      },
+      {
+        "text": "12345678 not delivered",
+        "status": "Undelivered (Generic)",
+        "closed": "-",
+        "mile": "Last Mile",
+        "category": "12345678 not delivered"
+      },
+      {
+        "text": "12345678 out for delivery",
+        "status": "Delivered",
+        "closed": "2:00 PM",
+        "mile": "Last Mile",
+        "category": "Delivered / Delivery Confirmation"
+      },
+      {
+        "text": "12345678 OFD",
+        "status": "Out For Delivery",
+        "closed": "-",
+        "mile": "Last Mile",
+        "category": "12345678 OFD"
+      },
+      {
+        "text": "12345678 rto revoke",
+        "status": "RTO Escalation",
+        "closed": "-",
+        "mile": "Last Mile",
+        "category": "RTO Revoke / Fake Remark / Self Collect"
+      },
+      {
+        "text": "12345678 pickup pending",
+        "status": "Undelivered (Generic)",
+        "closed": "-",
+        "mile": "First Mile",
+        "category": "Pickup Pending (3 Days)"
+      },
+      {
+        "text": "12345678 urgent pickup",
+        "status": "Undelivered (Generic)",
+        "closed": "-",
+        "mile": "First Mile",
+        "category": "Urgent Pickup Request"
+      },
+      {
+        "text": "12345678 in transit",
+        "status": "In Transit",
+        "closed": "-",
+        "mile": "In-Transit",
+        "category": "12345678 in transit"
+      },
+      {
+        "text": "12345678 cancel shipment",
+        "status": "Cancellation Request",
+        "closed": "-",
+        "mile": "Last Mile",
+        "category": "Cancellation Request"
+      },
+      {
+        "text": "12345678 lost",
+        "status": "Shipment Missing",
+        "closed": "-",
+        "mile": "Last Mile",
+        "category": "12345678 lost"
+      },
+      {
+        "text": "12345678 pod",
+        "status": "Undelivered (Generic)",
+        "closed": "-",
+        "mile": "Last Mile",
+        "category": "POD / Delivery Proof Request"
+      },
+      {
+        "text": "12345678 hello",
+        "status": "Undelivered (Generic)",
+        "closed": "-",
+        "mile": "Last Mile",
+        "category": "12345678 hello"
+      },
+      {
+        "text": "12345678 high value 25k",
+        "status": "Undelivered (Generic)",
+        "closed": "-",
+        "mile": "Last Mile",
+        "category": "High Value Shipment Delay"
+      },
+      {
+        "text": "12345678 urgent delivery delay",
+        "status": "Delivered",
+        "closed": "2:00 PM",
+        "mile": "Last Mile",
+        "category": "Shipping Related \u2013 Urgent Delivery (Delay & Misroute)"
+      }
+    ],
+    "tats": [
+      {
+        "raised": "11:50 PM",
+        "revert": "12:10 AM",
+        "closed": "-",
+        "result": [
+          "20 Min",
+          "-",
+          "09-Oct-2026",
+          "-"
+        ]
+      },
+      {
+        "raised": "2:00 PM",
+        "revert": "3:10 PM",
+        "closed": "2:00 PM",
+        "result": [
+          "1 Hr 10 Min",
+          "0 Min",
+          "08-Oct-2026",
+          "08-Oct-2026"
+        ]
+      },
+      {
+        "raised": "2:00 PM",
+        "revert": "-",
+        "closed": "-",
+        "result": [
+          "-",
+          "-",
+          "-",
+          "-"
+        ]
+      }
+    ]
+  }
+]

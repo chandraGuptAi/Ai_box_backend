@@ -1,0 +1,1667 @@
+{
+  "messages": [
+    {
+      "id": 1,
+      "body": "AWB 12345678 pickup pending",
+      "timestamp": 1790793000,
+      "author": "seller",
+      "author_name": "seller",
+      "group_id": "a@g.us",
+      "group_name": "Example a@g.us"
+    },
+    {
+      "id": 2,
+      "body": "AWB 12345678 confirmed response",
+      "timestamp": 1790793300,
+      "author": "staff",
+      "author_name": "staff",
+      "group_id": "a@g.us",
+      "group_name": "Example a@g.us"
+    },
+    {
+      "id": 3,
+      "body": "AWB 12345678 delivery proof verified",
+      "timestamp": 1790793900,
+      "author": "staff",
+      "author_name": "staff",
+      "group_id": "a@g.us",
+      "group_name": "Example a@g.us"
+    },
+    {
+      "id": 4,
+      "body": "AWB 12345678 out for delivery",
+      "timestamp": 1790879401,
+      "author": "seller",
+      "author_name": "seller",
+      "group_id": "a@g.us",
+      "group_name": "Example a@g.us"
+    },
+    {
+      "id": 5,
+      "body": "AWB 23456789 not delivered",
+      "timestamp": 1790879405,
+      "author": "other",
+      "author_name": "other",
+      "group_id": "b@g.us",
+      "group_name": "Example b@g.us"
+    },
+    {
+      "id": 6,
+      "body": "AWB 77777777",
+      "timestamp": 1790792999,
+      "author": "seller",
+      "author_name": "seller",
+      "group_id": "a@g.us",
+      "group_name": "Example a@g.us"
+    },
+    {
+      "id": 7,
+      "body": "AWB 88888888",
+      "timestamp": 1790965800,
+      "author": "seller",
+      "author_name": "seller",
+      "group_id": "a@g.us",
+      "group_name": "Example a@g.us"
+    }
+  ],
+  "request": {
+    "fromDate": "2026-10-01",
+    "toDate": "2026-10-02",
+    "from": 1790793000,
+    "to": 1790965800,
+    "groupIds": [
+      "a@g.us",
+      "b@g.us"
+    ]
+  },
+  "mappings": {
+    "employees": [
+      {
+        "id": "E1",
+        "name": "Example Employee",
+        "company": "BIGSHIP",
+        "department": "KAM"
+      }
+    ],
+    "sellers": [
+      {
+        "id": "S1",
+        "name": "Example Seller",
+        "status": "Active"
+      }
+    ],
+    "members": [
+      {
+        "senderId": "staff",
+        "employeeId": "E1"
+      },
+      {
+        "senderId": "seller",
+        "sellerId": "S1"
+      }
+    ],
+    "groups": [
+      {
+        "groupId": "a@g.us",
+        "employeeId": "E1",
+        "sellerId": "S1"
+      }
+    ],
+    "shipments": [
+      {
+        "groupId": "a@g.us",
+        "awb": "12345678",
+        "status": "Delivered",
+        "observedAt": 1790794000,
+        "responseMessageId": 2,
+        "closureMessageId": 3,
+        "manifestedAt": 1790706600,
+        "pickupAt": 1790793000,
+        "deliveredAt": 1790793900,
+        "eddAt": 1790879400
+      }
+    ],
+    "activity": [
+      {
+        "groupId": "a@g.us",
+        "date": "2026-10-01",
+        "active": true
+      },
+      {
+        "groupId": "a@g.us",
+        "date": "2026-10-02",
+        "active": false
+      }
+    ]
+  },
+  "result": {
+    "version": "1.0.0",
+    "sheets": {
+      "Overview": {
+        "name": "Overview",
+        "columns": [
+          "Metric",
+          "Value"
+        ],
+        "rows": [
+          [
+            "Reporting start",
+            "2026-10-01"
+          ],
+          [
+            "Reporting end",
+            "2026-10-02"
+          ],
+          [
+            "Timezone",
+            "Asia/Kolkata"
+          ],
+          [
+            "Calculation version",
+            "1.0.0"
+          ],
+          [
+            "Captured messages",
+            5
+          ],
+          [
+            "Groups with AWB mentions",
+            2
+          ],
+          [
+            "Groups in scope",
+            2
+          ],
+          [
+            "Raw AWB entries",
+            5
+          ],
+          [
+            "Daily AWB records",
+            3
+          ],
+          [
+            "Distinct AWBs",
+            2
+          ],
+          [
+            "Verified responses",
+            1
+          ],
+          [
+            "ERP statuses available",
+            2
+          ],
+          [
+            "ERP statuses unavailable",
+            1
+          ],
+          [
+            "Employee-attributed records",
+            1
+          ],
+          [
+            "Seller-attributed records",
+            1
+          ],
+          [
+            "First captured source",
+            "01 Oct 2026, 00:00 IST"
+          ],
+          [
+            "Last captured source",
+            "02 Oct 2026, 00:00 IST"
+          ],
+          [
+            "Completeness",
+            "Incomplete upstream data"
+          ],
+          [
+            "Data note 1",
+            "Captured retained messages only; AWB mentions are candidates, not confirmed incidents."
+          ],
+          [
+            "Data note 2",
+            "ERP statuses use the latest imported observation before the reporting cutoff, not historical status at each message. Message classifications are separate."
+          ],
+          [
+            "Data note 3",
+            "AWB/LR count sums daily group/AWB records; distinct AWBs is shown separately."
+          ],
+          [
+            "Data note 4",
+            "Entity attribution uses the last AWB mention author, matching the reference; group ownership alone is not authorship."
+          ],
+          [
+            "Data note 5",
+            "AI/manual counts unavailable: existing AI reports lack a normalized AWB provenance link."
+          ]
+        ],
+        "note": "",
+        "formats": {}
+      },
+      "Day_Wise_Performance": {
+        "name": "Day_Wise_Performance",
+        "columns": [
+          "Date",
+          "Group Name",
+          "Group ID",
+          "Processing Method",
+          "No. of Escalation Entries",
+          "AWB / LR Escalation",
+          "Distinct AWBs",
+          "ERP Status unavailable",
+          "First Mile",
+          "Last Mile",
+          "In-Transit",
+          "Unclassified stage",
+          "Delivered",
+          "Manifested",
+          "Cancelled",
+          "RTO Delivered",
+          "Undelivered",
+          "RTO In Transit",
+          "In-Transit",
+          "Pickup Scheduled",
+          "Out for Delivery",
+          "Not Picked",
+          "Lost"
+        ],
+        "rows": [
+          [
+            "2026-10-01",
+            "Example a@g.us",
+            "a@g.us",
+            "Deterministic",
+            3,
+            1,
+            1,
+            0,
+            0,
+            1,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            "2026-10-02",
+            "Example a@g.us",
+            "a@g.us",
+            "Deterministic",
+            1,
+            1,
+            1,
+            0,
+            0,
+            1,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            "2026-10-02",
+            "Example b@g.us",
+            "b@g.us",
+            "Deterministic",
+            1,
+            1,
+            1,
+            1,
+            0,
+            1,
+            0,
+            0,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        ],
+        "note": "AWB/LR count sums daily group/AWB records; distinct AWBs is shown separately.",
+        "formats": {
+          "0": "date"
+        }
+      },
+      "KAM_MTD_Performance": {
+        "name": "KAM_MTD_Performance",
+        "columns": [
+          null,
+          "S.No",
+          "EMP_ID",
+          "EMP_NAME",
+          "COMPANY",
+          "Department",
+          "No. of Escalation Entries",
+          "AWB / LR Escalation",
+          "Escalation Closed  ( Deliverd )",
+          "Pending AWB / LR",
+          "Revert TAT Avg Mints",
+          "AWB / LR %",
+          "Rank",
+          null,
+          "Delivered",
+          "Manifested",
+          "Cancelled",
+          "RTO Delivered",
+          "Undelivered",
+          "RTO In Transit",
+          "In-Transit",
+          "Pickup Scheduled",
+          "Out for Delivery",
+          "Not Picked",
+          "Lost",
+          "Total",
+          null,
+          "Check",
+          "Check",
+          "Distinct AWBs",
+          "ERP Status unavailable",
+          "Verified response count"
+        ],
+        "rows": [
+          [
+            "Example Employee-E1-BIGSHIP",
+            1,
+            "E1",
+            "Example Employee",
+            "BIGSHIP",
+            "KAM",
+            3,
+            1,
+            1,
+            0,
+            5,
+            0,
+            1,
+            null,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            null,
+            true,
+            0,
+            1,
+            0,
+            1
+          ]
+        ],
+        "note": "Reference percentage = delivered / daily AWB count - 1; descending delivered competition rank only when all ERP statuses are known.",
+        "formats": {
+          "11": "percent"
+        }
+      },
+      "KAM_Daily_Performance": {
+        "name": "KAM_Daily_Performance",
+        "columns": [
+          null,
+          "S.No",
+          "Date",
+          "Day's",
+          "EMP_ID",
+          "EMP_NAME",
+          "COMPANY",
+          "Department",
+          "No. of Escalation Entries",
+          "AWB / LR Escalation",
+          "Delivered",
+          "Manifested",
+          "Cancelled",
+          "RTO Delivered",
+          "Undelivered",
+          "RTO In Transit",
+          "In-Transit",
+          "Pickup Scheduled",
+          "Out for Delivery",
+          "Not Picked",
+          "Lost",
+          "Total",
+          "Revert TAT Avg Mints",
+          null,
+          "Check",
+          "Check",
+          "Distinct AWBs",
+          "ERP Status unavailable",
+          "Verified response count"
+        ],
+        "rows": [
+          [
+            "Example Employee-E1-BIGSHIP",
+            1,
+            "2026-10-01",
+            "Thursday",
+            "E1",
+            "Example Employee",
+            "BIGSHIP",
+            "KAM",
+            3,
+            1,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            5,
+            null,
+            true,
+            0,
+            1,
+            0,
+            1
+          ]
+        ],
+        "note": "Response averages include explicit verified responses only; missing ERP statuses remain unavailable.",
+        "formats": {
+          "2": "date"
+        }
+      },
+      "Seller_MTD_Performance": {
+        "name": "Seller_MTD_Performance",
+        "columns": [
+          null,
+          "S.No",
+          "Seller_ID",
+          "Seller_NAME",
+          "Type",
+          "No. of Escalation Entries",
+          "AWB / LR Escalation",
+          "Revert TAT Avg Mints",
+          "AWB / LR %",
+          "Rank",
+          null,
+          "Delivered",
+          "Manifested",
+          "Cancelled",
+          "RTO Delivered",
+          "Undelivered",
+          "RTO In Transit",
+          "In-Transit",
+          "Pickup Scheduled",
+          "Out for Delivery",
+          "Not Picked",
+          "Lost",
+          "Total",
+          null,
+          "Check",
+          "Check",
+          "Distinct AWBs",
+          "ERP Status unavailable",
+          "Verified response count"
+        ],
+        "rows": [
+          [
+            "Example Seller-S1-Seller",
+            1,
+            "S1",
+            "Example Seller",
+            "Seller",
+            1,
+            1,
+            null,
+            0,
+            1,
+            null,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            null,
+            true,
+            0,
+            1,
+            0,
+            0
+          ]
+        ],
+        "note": "Reference percentage = daily AWB count / entries - 1; descending AWB count competition rank.",
+        "formats": {
+          "8": "percent"
+        }
+      },
+      "Seller_Daily_Performance": {
+        "name": "Seller_Daily_Performance",
+        "columns": [
+          null,
+          "S.No",
+          "Date",
+          "Day's",
+          "Seller_ID",
+          "Seller_NAME",
+          "Type",
+          "No. of Escalation Entries",
+          "AWB / LR Escalation",
+          "Delivered",
+          "Manifested",
+          "Cancelled",
+          "RTO Delivered",
+          "Undelivered",
+          "RTO In Transit",
+          "In-Transit",
+          "Pickup Scheduled",
+          "Out for Delivery",
+          "Not Picked",
+          "Lost",
+          "Total",
+          "Revert TAT Avg Mints",
+          null,
+          "Check",
+          "Check",
+          "Distinct AWBs",
+          "ERP Status unavailable",
+          "Verified response count"
+        ],
+        "rows": [
+          [
+            "Example Seller-S1-Seller",
+            1,
+            "2026-10-02",
+            "Friday",
+            "S1",
+            "Example Seller",
+            "Seller",
+            1,
+            1,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            null,
+            null,
+            true,
+            0,
+            1,
+            0,
+            0
+          ]
+        ],
+        "note": "Response averages include explicit verified responses only; missing ERP statuses remain unavailable.",
+        "formats": {
+          "2": "date"
+        }
+      },
+      "KAM_Active_Inactive_Escalation": {
+        "name": "KAM_Active_Inactive_Escalation",
+        "columns": [
+          null,
+          "S.No",
+          "EMP_ID",
+          "EMP_NAME",
+          "COMPANY",
+          "Department",
+          "Groups Assigned",
+          "Active Groups",
+          "Inactive Groups",
+          "Active %",
+          "Inactive %",
+          "2026-10-01",
+          "2026-10-02"
+        ],
+        "rows": [
+          [
+            "Example Employee-E1-BIGSHIP",
+            1,
+            "E1",
+            "Example Employee",
+            "BIGSHIP",
+            "KAM",
+            1,
+            1,
+            0,
+            1,
+            0,
+            1,
+            0
+          ]
+        ],
+        "note": "Assigned master groups, not connection status. Original activity needs complete imported daily flags.",
+        "formats": {
+          "9": "percent",
+          "10": "percent"
+        }
+      },
+      "Active_Inactive_Seller_Esca..": {
+        "name": "Active_Inactive_Seller_Esca..",
+        "columns": [
+          "Seller identity",
+          "Employee identity",
+          "S.No",
+          "SELLER CUSTOMER ID",
+          "SELLER COMPANY NAME",
+          "Actual Seller Company Name",
+          "SELLER NAME",
+          "Type",
+          "EMP ID",
+          "ASSIGNED",
+          "COMPANY",
+          "SALE POC NAME",
+          "LOCATION",
+          "Active / In_Active",
+          "MTD Active",
+          "2026-10-01",
+          "2026-10-02",
+          "Selected period total",
+          null,
+          "2026-10-01",
+          "2026-10-02",
+          "Captured escalation entries",
+          "Group ID",
+          "Actual management status"
+        ],
+        "rows": [
+          [
+            "Example Seller-S1-Seller",
+            "Example Employee-E1-BIGSHIP",
+            1,
+            "S1",
+            "Example Seller",
+            "Example a@g.us",
+            "Example Seller",
+            "Seller",
+            "E1",
+            "Example Employee",
+            "BIGSHIP",
+            null,
+            null,
+            "Active",
+            1,
+            1,
+            0,
+            1,
+            null,
+            3,
+            1,
+            4,
+            "a@g.us",
+            "Active"
+          ]
+        ],
+        "note": "Reference activity requires explicit daily flags for every selected day. Missing flags do not imply inactivity; captured entries and official seller status are separate.",
+        "formats": {}
+      },
+      "AI_MTD_Performance": {
+        "name": "AI_MTD_Performance",
+        "columns": [
+          "Metric",
+          "Count",
+          "Definition"
+        ],
+        "rows": [
+          [
+            "Raw escalation entries",
+            5,
+            "AWB mentions in captured messages"
+          ],
+          [
+            "Daily AWB records",
+            3,
+            "Daily group/AWB records"
+          ],
+          [
+            "Deterministic processed records",
+            3,
+            "Not AI processing"
+          ],
+          [
+            "Manually processed records",
+            null,
+            "No validated manual provenance"
+          ],
+          [
+            "Automated/AI processed records",
+            null,
+            "No normalized AI-to-AWB source link"
+          ],
+          [
+            "Delivered",
+            2,
+            "Imported ERP status only"
+          ],
+          [
+            "Manifested",
+            0,
+            "Imported ERP status only"
+          ],
+          [
+            "Cancelled",
+            0,
+            "Imported ERP status only"
+          ],
+          [
+            "RTO Delivered",
+            0,
+            "Imported ERP status only"
+          ],
+          [
+            "Undelivered",
+            0,
+            "Imported ERP status only"
+          ],
+          [
+            "RTO In Transit",
+            0,
+            "Imported ERP status only"
+          ],
+          [
+            "In-Transit",
+            0,
+            "Imported ERP status only"
+          ],
+          [
+            "Pickup Scheduled",
+            0,
+            "Imported ERP status only"
+          ],
+          [
+            "Out for Delivery",
+            0,
+            "Imported ERP status only"
+          ],
+          [
+            "Not Picked",
+            0,
+            "Imported ERP status only"
+          ],
+          [
+            "Lost",
+            0,
+            "Imported ERP status only"
+          ],
+          [
+            "ERP Status unavailable",
+            1,
+            "No imported dated shipment evidence"
+          ]
+        ],
+        "note": "Processing methods are distinct; overlapping counts are not summed.",
+        "formats": {}
+      },
+      "Backup": {
+        "name": "Backup",
+        "columns": [
+          "Date",
+          "Group Name",
+          "Processing Method",
+          "Seller/Employee",
+          "No. of Escalation Entries",
+          "AWB Number",
+          "Mile Stage",
+          "Category / Remarks",
+          "Current Status",
+          "Esc. Raised",
+          "Esc. Closed",
+          "Revert TAT",
+          "Resolution TAT",
+          "Revert Date",
+          "Resolution Date",
+          "Revert TAT Minut",
+          "Manifested Date",
+          "Pickup",
+          "Delivered",
+          "Ageing",
+          "EDD",
+          "IN TAT / OUT TAT",
+          "Ops Remark",
+          null,
+          null,
+          "Source Group ID",
+          "Source Message IDs",
+          "Observed message status",
+          "AWB confidence",
+          "Mapped Employee ID",
+          "Mapped Seller ID",
+          "ERP status observed at",
+          "Verified response message ID",
+          "Verified closure message ID"
+        ],
+        "rows": [
+          [
+            "2026-10-01",
+            "Example a@g.us",
+            "Deterministic",
+            "Example Employee-E1-BIGSHIP",
+            3,
+            "12345678",
+            "Last Mile",
+            "AWB 12345678 delivery proof verified",
+            "Delivered",
+            "01 Oct 2026, 00:00 IST",
+            "01 Oct 2026, 00:15 IST",
+            "0h 5m",
+            "0h 15m",
+            "2026-10-01",
+            "2026-10-01",
+            5,
+            "2026-09-30",
+            "2026-10-01",
+            "2026-10-01",
+            0,
+            "2026-10-02",
+            "IN TAT",
+            null,
+            8,
+            null,
+            "a@g.us",
+            "1, 2, 3",
+            "Unclassified",
+            "explicit",
+            "E1",
+            null,
+            "01 Oct 2026, 00:16 IST",
+            2,
+            3
+          ],
+          [
+            "2026-10-02",
+            "Example a@g.us",
+            "Deterministic",
+            "Example Seller-S1-Seller",
+            1,
+            "12345678",
+            "Last Mile",
+            "AWB 12345678 out for delivery",
+            "Delivered",
+            "02 Oct 2026, 00:00 IST",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            "2026-09-30",
+            "2026-10-01",
+            "2026-10-01",
+            0,
+            "2026-10-02",
+            "IN TAT",
+            null,
+            8,
+            null,
+            "a@g.us",
+            "4",
+            "Out For Delivery",
+            "explicit",
+            null,
+            "S1",
+            "01 Oct 2026, 00:16 IST",
+            null,
+            null
+          ],
+          [
+            "2026-10-02",
+            "Example b@g.us",
+            "Deterministic",
+            null,
+            1,
+            "23456789",
+            "Last Mile",
+            "AWB 23456789 not delivered",
+            null,
+            "02 Oct 2026, 00:00 IST",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            8,
+            null,
+            "b@g.us",
+            "5",
+            "Undelivered (Generic)",
+            "explicit",
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        ],
+        "note": "Original A:Y layout preserved including unlabeled X (AWB length) and Y (blank). Extra columns preserve traceability; ERP and observed statuses remain separate.",
+        "formats": {
+          "0": "date",
+          "13": "date",
+          "14": "date",
+          "16": "date",
+          "17": "date",
+          "18": "date",
+          "20": "date"
+        }
+      }
+    },
+    "summary": {
+      "messagesProcessed": 5,
+      "uniqueAwbs": 2,
+      "groupAwbs": 2,
+      "extractedEntries": 5,
+      "recordCount": 3,
+      "confirmedResponses": 1,
+      "erpKnown": 2,
+      "erpUnknown": 1,
+      "employeeRecords": 1,
+      "sellerRecords": 1
+    },
+    "quality": {
+      "uncertainCandidates": 0,
+      "unclassifiedStatus": 1,
+      "unverifiedResponse": 2,
+      "missingClosure": 2,
+      "invalidTimestamps": 0,
+      "skippedRecords": 0,
+      "notes": [
+        "Captured retained messages only; AWB mentions are candidates, not confirmed incidents.",
+        "ERP statuses use the latest imported observation before the reporting cutoff, not historical status at each message. Message classifications are separate.",
+        "AWB/LR count sums daily group/AWB records; distinct AWBs is shown separately.",
+        "Entity attribution uses the last AWB mention author, matching the reference; group ownership alone is not authorship.",
+        "AI/manual counts unavailable: existing AI reports lack a normalized AWB provenance link."
+      ],
+      "coverage": "Captured retained messages only; unavailable history cannot be reconstructed."
+    },
+    "records": [
+      {
+        "key": "[\"a@g.us\",\"2026-10-01\",\"12345678\"]",
+        "awb": "12345678",
+        "groupId": "a@g.us",
+        "groupName": "Example a@g.us",
+        "date": "2026-10-01",
+        "firstAt": 1790793000,
+        "lastAt": 1790793900,
+        "sourceMessages": [
+          {
+            "id": 1,
+            "author": "seller",
+            "author_name": "seller",
+            "timestamp": 1790793000,
+            "body": "AWB 12345678 pickup pending"
+          },
+          {
+            "id": 2,
+            "author": "staff",
+            "author_name": "staff",
+            "timestamp": 1790793300,
+            "body": "AWB 12345678 confirmed response"
+          },
+          {
+            "id": 3,
+            "author": "staff",
+            "author_name": "staff",
+            "timestamp": 1790793900,
+            "body": "AWB 12345678 delivery proof verified"
+          }
+        ],
+        "observations": [
+          {
+            "messageId": 1,
+            "timestamp": 1790793000,
+            "status": "Unclassified",
+            "mile": "First Mile",
+            "category": "Pickup Pending",
+            "evidence": null,
+            "closureVerified": false,
+            "extraction": {
+              "awb": "12345678",
+              "confidence": "explicit",
+              "phoneShaped": false,
+              "rule": "Explicit AWB/LR/tracking label"
+            }
+          },
+          {
+            "messageId": 2,
+            "timestamp": 1790793300,
+            "status": "Unclassified",
+            "mile": "Unclassified",
+            "category": "AWB 12345678 confirmed response",
+            "evidence": null,
+            "closureVerified": false,
+            "extraction": {
+              "awb": "12345678",
+              "confidence": "explicit",
+              "phoneShaped": false,
+              "rule": "Explicit AWB/LR/tracking label"
+            }
+          },
+          {
+            "messageId": 3,
+            "timestamp": 1790793900,
+            "status": "Unclassified",
+            "mile": "Last Mile",
+            "category": "AWB 12345678 delivery proof verified",
+            "evidence": null,
+            "closureVerified": false,
+            "extraction": {
+              "awb": "12345678",
+              "confidence": "explicit",
+              "phoneShaped": false,
+              "rule": "Explicit AWB/LR/tracking label"
+            }
+          }
+        ],
+        "entryCount": 3,
+        "confidence": "explicit",
+        "mode": "enhanced",
+        "sender": "staff",
+        "status": "Unclassified",
+        "mile": "Last Mile",
+        "category": "AWB 12345678 delivery proof verified",
+        "legacyResponseSeconds": 85501,
+        "legacyResponseAt": 1790879401,
+        "responseSeconds": 300,
+        "resolutionSeconds": 900,
+        "responseAt": 1790793300,
+        "closureAt": 1790793900,
+        "responseMessageId": 2,
+        "closureMessageId": 3,
+        "employeeId": "E1",
+        "sellerId": null,
+        "assignedEmployeeId": "E1",
+        "assignedSellerId": "S1",
+        "employeeName": "Example Employee",
+        "sellerName": null,
+        "processingMethod": "Deterministic",
+        "erp": {
+          "groupId": "a@g.us",
+          "awb": "12345678",
+          "status": "Delivered",
+          "observedAt": 1790794000,
+          "responseMessageId": 2,
+          "closureMessageId": 3,
+          "manifestedAt": 1790706600,
+          "pickupAt": 1790793000,
+          "deliveredAt": 1790793900,
+          "eddAt": 1790879400
+        }
+      },
+      {
+        "key": "[\"a@g.us\",\"2026-10-02\",\"12345678\"]",
+        "awb": "12345678",
+        "groupId": "a@g.us",
+        "groupName": "Example a@g.us",
+        "date": "2026-10-02",
+        "firstAt": 1790879401,
+        "lastAt": 1790879401,
+        "sourceMessages": [
+          {
+            "id": 4,
+            "author": "seller",
+            "author_name": "seller",
+            "timestamp": 1790879401,
+            "body": "AWB 12345678 out for delivery"
+          }
+        ],
+        "observations": [
+          {
+            "messageId": 4,
+            "timestamp": 1790879401,
+            "status": "Out For Delivery",
+            "mile": "Last Mile",
+            "category": "AWB 12345678 out for delivery",
+            "evidence": "out for delivery / OFD",
+            "closureVerified": false,
+            "extraction": {
+              "awb": "12345678",
+              "confidence": "explicit",
+              "phoneShaped": false,
+              "rule": "Explicit AWB/LR/tracking label"
+            }
+          }
+        ],
+        "entryCount": 1,
+        "confidence": "explicit",
+        "mode": "enhanced",
+        "sender": "seller",
+        "status": "Out For Delivery",
+        "mile": "Last Mile",
+        "category": "AWB 12345678 out for delivery",
+        "legacyResponseSeconds": null,
+        "legacyResponseAt": null,
+        "responseSeconds": null,
+        "resolutionSeconds": null,
+        "responseAt": null,
+        "closureAt": null,
+        "responseMessageId": null,
+        "closureMessageId": null,
+        "employeeId": null,
+        "sellerId": "S1",
+        "assignedEmployeeId": "E1",
+        "assignedSellerId": "S1",
+        "employeeName": null,
+        "sellerName": "Example Seller",
+        "processingMethod": "Deterministic",
+        "erp": {
+          "groupId": "a@g.us",
+          "awb": "12345678",
+          "status": "Delivered",
+          "observedAt": 1790794000,
+          "responseMessageId": 2,
+          "closureMessageId": 3,
+          "manifestedAt": 1790706600,
+          "pickupAt": 1790793000,
+          "deliveredAt": 1790793900,
+          "eddAt": 1790879400
+        }
+      },
+      {
+        "key": "[\"b@g.us\",\"2026-10-02\",\"23456789\"]",
+        "awb": "23456789",
+        "groupId": "b@g.us",
+        "groupName": "Example b@g.us",
+        "date": "2026-10-02",
+        "firstAt": 1790879405,
+        "lastAt": 1790879405,
+        "sourceMessages": [
+          {
+            "id": 5,
+            "author": "other",
+            "author_name": "other",
+            "timestamp": 1790879405,
+            "body": "AWB 23456789 not delivered"
+          }
+        ],
+        "observations": [
+          {
+            "messageId": 5,
+            "timestamp": 1790879405,
+            "status": "Undelivered (Generic)",
+            "mile": "Last Mile",
+            "category": "AWB 23456789 not delivered",
+            "evidence": "negated delivery",
+            "closureVerified": false,
+            "extraction": {
+              "awb": "23456789",
+              "confidence": "explicit",
+              "phoneShaped": false,
+              "rule": "Explicit AWB/LR/tracking label"
+            }
+          }
+        ],
+        "entryCount": 1,
+        "confidence": "explicit",
+        "mode": "enhanced",
+        "sender": "other",
+        "status": "Undelivered (Generic)",
+        "mile": "Last Mile",
+        "category": "AWB 23456789 not delivered",
+        "legacyResponseSeconds": null,
+        "legacyResponseAt": null,
+        "responseSeconds": null,
+        "resolutionSeconds": null,
+        "responseAt": null,
+        "closureAt": null,
+        "responseMessageId": null,
+        "closureMessageId": null,
+        "employeeId": null,
+        "sellerId": null,
+        "assignedEmployeeId": null,
+        "assignedSellerId": null,
+        "employeeName": null,
+        "sellerName": null,
+        "processingMethod": "Deterministic",
+        "erp": null
+      }
+    ],
+    "groupActivity": [
+      {
+        "groupId": "a@g.us",
+        "groupName": "Example a@g.us",
+        "messages": 4,
+        "lastAt": 1790879401
+      },
+      {
+        "groupId": "b@g.us",
+        "groupName": "Example b@g.us",
+        "messages": 1,
+        "lastAt": 1790879405
+      }
+    ],
+    "coverage": {
+      "messages": 5,
+      "groups": 2,
+      "firstAt": 1790793000,
+      "lastAt": 1790879405,
+      "maxMessageId": 5
+    }
+  },
+  "details": {
+    "builderVersion": "2.0.0",
+    "calculationVersion": "1.0.0",
+    "meta": null,
+    "freshness": null,
+    "request": {
+      "fromDate": "2026-10-01",
+      "toDate": "2026-10-02",
+      "from": 1790793000,
+      "to": 1790965800,
+      "period": null,
+      "groupCount": 2
+    },
+    "summary": [
+      "2026-10-01 to 2026-10-02 (IST): 5 AWB mention(s) across 2 distinct AWB(s) formed 2 group/AWB conversation(s) in 2 group(s), from 5 captured message(s).",
+      "1 conversation(s) (50%) received a linked reply; median first reply 5 min, 90th percentile 5 min.",
+      "ERP status is known for 1 conversation(s): 1 delivered, 0 open, 0 cancelled, 0 RTO."
+    ],
+    "kpis": {
+      "messages": 5,
+      "entries": 5,
+      "records": 3,
+      "distinctAwbs": 2,
+      "conversations": 2,
+      "groups": 2,
+      "explicitAwbs": 2,
+      "candidateAwbs": 0,
+      "erpKnown": 1,
+      "erpUnavailable": 1,
+      "delivered": 1,
+      "cancelled": 0,
+      "rto": 0,
+      "open": 0,
+      "reportedDeliveredUnverified": 0,
+      "linkedReplies": 1,
+      "noReply": 1,
+      "medianReplySeconds": 300,
+      "verifiedResponses": 1,
+      "verifiedClosures": 1
+    },
+    "status": {
+      "erp": [
+        {
+          "label": "Delivered",
+          "count": 1
+        },
+        {
+          "label": "Manifested",
+          "count": 0
+        },
+        {
+          "label": "Cancelled",
+          "count": 0
+        },
+        {
+          "label": "RTO Delivered",
+          "count": 0
+        },
+        {
+          "label": "Undelivered",
+          "count": 0
+        },
+        {
+          "label": "RTO In Transit",
+          "count": 0
+        },
+        {
+          "label": "In-Transit",
+          "count": 0
+        },
+        {
+          "label": "Pickup Scheduled",
+          "count": 0
+        },
+        {
+          "label": "Out for Delivery",
+          "count": 0
+        },
+        {
+          "label": "Not Picked",
+          "count": 0
+        },
+        {
+          "label": "Lost",
+          "count": 0
+        }
+      ],
+      "erpUnavailable": 1,
+      "observed": [
+        {
+          "label": "Out For Delivery",
+          "count": 1
+        },
+        {
+          "label": "In Transit",
+          "count": 0
+        },
+        {
+          "label": "Undelivered (Generic)",
+          "count": 1
+        },
+        {
+          "label": "Re-dispatch Required",
+          "count": 0
+        },
+        {
+          "label": "Customer Contact Issue",
+          "count": 0
+        },
+        {
+          "label": "Shipment Missing",
+          "count": 0
+        },
+        {
+          "label": "RTO Escalation",
+          "count": 0
+        },
+        {
+          "label": "Cancellation Request",
+          "count": 0
+        },
+        {
+          "label": "Delivered",
+          "count": 0
+        },
+        {
+          "label": "Unclassified",
+          "count": 0
+        }
+      ]
+    },
+    "trend": [
+      {
+        "date": "2026-10-01",
+        "entries": 3,
+        "records": 1,
+        "distinctAwbs": 1,
+        "newConversations": 1,
+        "linkedReplies": 1,
+        "cumulativeRecords": 1
+      },
+      {
+        "date": "2026-10-02",
+        "entries": 2,
+        "records": 2,
+        "distinctAwbs": 2,
+        "newConversations": 1,
+        "linkedReplies": 0,
+        "cumulativeRecords": 3
+      }
+    ],
+    "classification": {
+      "categories": [
+        {
+          "label": "Pickup Pending",
+          "count": 1
+        },
+        {
+          "label": "Other / unclassified",
+          "count": 1
+        }
+      ],
+      "miles": [
+        {
+          "label": "First Mile",
+          "count": 0
+        },
+        {
+          "label": "In-Transit",
+          "count": 0
+        },
+        {
+          "label": "Last Mile",
+          "count": 2
+        },
+        {
+          "label": "Unclassified",
+          "count": 0
+        }
+      ]
+    },
+    "tat": {
+      "linkedReply": {
+        "count": 1,
+        "avg": 300,
+        "median": 300,
+        "p90": 300,
+        "max": 300,
+        "buckets": [
+          {
+            "label": "Under 1 hour",
+            "count": 1
+          },
+          {
+            "label": "1–4 hours",
+            "count": 0
+          },
+          {
+            "label": "4–24 hours",
+            "count": 0
+          },
+          {
+            "label": "Over 24 hours",
+            "count": 0
+          }
+        ]
+      },
+      "verifiedResponse": {
+        "count": 1,
+        "avg": 300,
+        "median": 300,
+        "p90": 300,
+        "max": 300,
+        "buckets": [
+          {
+            "label": "Under 1 hour",
+            "count": 1
+          },
+          {
+            "label": "1–4 hours",
+            "count": 0
+          },
+          {
+            "label": "4–24 hours",
+            "count": 0
+          },
+          {
+            "label": "Over 24 hours",
+            "count": 0
+          }
+        ]
+      },
+      "verifiedResolution": {
+        "count": 1,
+        "avg": 900,
+        "median": 900,
+        "p90": 900,
+        "max": 900,
+        "buckets": [
+          {
+            "label": "Under 1 hour",
+            "count": 1
+          },
+          {
+            "label": "1–4 hours",
+            "count": 0
+          },
+          {
+            "label": "4–24 hours",
+            "count": 0
+          },
+          {
+            "label": "Over 24 hours",
+            "count": 0
+          }
+        ]
+      },
+      "erpDelivery": {
+        "count": 1,
+        "avg": 900,
+        "median": 900,
+        "p90": 900,
+        "max": 900,
+        "buckets": [
+          {
+            "label": "Under 1 hour",
+            "count": 1
+          },
+          {
+            "label": "1–4 hours",
+            "count": 0
+          },
+          {
+            "label": "4–24 hours",
+            "count": 0
+          },
+          {
+            "label": "Over 24 hours",
+            "count": 0
+          }
+        ]
+      }
+    },
+    "kam": [
+      {
+        "id": "E1",
+        "name": "Example Employee",
+        "assignedGroups": 1,
+        "entries": 3,
+        "records": 1,
+        "distinctAwbs": 1,
+        "conversations": 1,
+        "linkedReplies": 1,
+        "medianReplySeconds": 300,
+        "verifiedResponses": 1,
+        "avgVerifiedResponseMinutes": 5,
+        "erpKnown": 1,
+        "delivered": 1,
+        "pending": 0
+      }
+    ],
+    "seller": [
+      {
+        "id": "S1",
+        "name": "Example Seller",
+        "assignedGroups": 1,
+        "entries": 1,
+        "records": 1,
+        "distinctAwbs": 1,
+        "conversations": 1,
+        "linkedReplies": 1,
+        "medianReplySeconds": 300,
+        "verifiedResponses": 0,
+        "avgVerifiedResponseMinutes": null,
+        "erpKnown": 1,
+        "delivered": 1,
+        "pending": 0
+      }
+    ],
+    "activity": {
+      "groups": [
+        {
+          "groupId": "a@g.us",
+          "groupName": "Example a@g.us",
+          "messages": 4,
+          "lastAt": 1790879401,
+          "awbRecords": 2,
+          "status": "Active with escalations"
+        },
+        {
+          "groupId": "b@g.us",
+          "groupName": "Example b@g.us",
+          "messages": 1,
+          "lastAt": 1790879405,
+          "awbRecords": 1,
+          "status": "Active with escalations"
+        }
+      ],
+      "kam": [
+        {
+          "id": "E1",
+          "name": "Example Employee",
+          "assigned": 1,
+          "active": 1,
+          "withEscalations": 1,
+          "inactive": 0
+        }
+      ]
+    },
+    "breakdown": [],
+    "groupBy": "none",
+    "ai": null,
+    "recommendations": [
+      {
+        "level": "warning",
+        "text": "ERP status is unavailable for 1 of 2 AWB conversations. Delivered, pending, cancelled and RTO counts need imported shipment evidence; message text is not proof of delivery."
+      },
+      {
+        "level": "serious",
+        "text": "1 AWB conversation(s) have no linked reply from another participant mentioning the same AWB. Review them first in AWB-wise records."
+      }
+    ],
+    "quality": {
+      "uncertainCandidates": 0,
+      "unclassifiedStatus": 1,
+      "unverifiedResponse": 2,
+      "missingClosure": 2,
+      "invalidTimestamps": 0,
+      "skippedRecords": 0,
+      "notes": [
+        "Captured retained messages only; AWB mentions are candidates, not confirmed incidents.",
+        "ERP statuses use the latest imported observation before the reporting cutoff, not historical status at each message. Message classifications are separate.",
+        "AWB/LR count sums daily group/AWB records; distinct AWBs is shown separately.",
+        "Entity attribution uses the last AWB mention author, matching the reference; group ownership alone is not authorship.",
+        "AI/manual counts unavailable: existing AI reports lack a normalized AWB provenance link."
+      ],
+      "coverage": "Captured retained messages only; unavailable history cannot be reconstructed."
+    }
+  }
+}

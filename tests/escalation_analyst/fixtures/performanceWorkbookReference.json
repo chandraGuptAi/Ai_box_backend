@@ -1,0 +1,27 @@
+{
+  "source": "Escalation_Report_28-Sep-2026.xlsx",
+  "sheet": "Backup",
+  "anonymization": "Identifiers replaced; classification and source numeric entry counts preserved.",
+  "records": [
+    {
+      "date": "2026-09-01",
+      "groupId": "sanitized@g.us",
+      "groupName": "Example Group",
+      "awb": "10000000",
+      "entries": 1,
+      "mile": "Last Mile",
+      "status": "RTO Delivered",
+      "legacyResponseMinutes": 5
+    },
+    {
+      "date": "2026-09-01",
+      "groupId": "sanitized@g.us",
+      "groupName": "Example Group",
+      "awb": "10000001",
+      "entries": 1,
+      "mile": "Last Mile",
+      "status": "Delivered",
+      "legacyResponseMinutes": 41
+    }
+  ]
+}
