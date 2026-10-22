@@ -25,6 +25,11 @@ def execute_ordered_sections(plan: AnalysisPlan, rows):
 # --- Filtering -----------------------------------------------------------------------
 
 def _matches(value: Any, f: Filter) -> bool:
+    if isinstance(value, date) and f.op in {"gt", "gte", "lt", "lte", "between"}:
+        bounds = [date.fromisoformat(v) if isinstance(v, str) else v for v in (f.value if f.op == "between" else [f.value])]
+        if f.op == "between":
+            return bounds[0] <= value <= bounds[1]
+        return {"gt": value > bounds[0], "gte": value >= bounds[0], "lt": value < bounds[0], "lte": value <= bounds[0]}[f.op]
     if isinstance(f.value, (tuple, list)) and f.op in ("in", "not_in"):
         inside = str(value).casefold() in {str(v).casefold() for v in f.value}
         return inside if f.op == "in" else not inside

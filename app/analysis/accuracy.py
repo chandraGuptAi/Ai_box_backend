@@ -114,7 +114,7 @@ def equivalent(actual, expected, decimals=0):
     return actual.quantize(quantum, rounding=rounding) == expected.quantize(quantum, rounding=rounding)
 
 
-def reference_row(record):
+def reference_row(record, timezone_name="Asia/Kolkata"):
     flat = _flatten(record)
     row = {}
     for key, limit in (("courier", 80), ("destination_city", 60), ("destination_state", 60),
@@ -143,6 +143,10 @@ def reference_row(record):
         row[key] = value if value is not None and value >= 0 else None
     row["zone"] = scrub_text(_lookup(flat, "zone"), 30)
     row["weekday"] = row["order_date"].strftime("%A") if row["order_date"] else None
+    from app.prompts.shipment_prompt import manifest_calendar_day, normalize_shipment_status, extended_shipment_fields
+    row.update(extended_shipment_fields(record))
+    row["manifest_datetime"] = manifest_calendar_day(record, timezone_name)
+    row["shipment_status"] = normalize_shipment_status(row["status"])
     return row
 
 
@@ -238,6 +242,12 @@ def _matches(row, condition):
     actual, value, op = row.get(condition.field), condition.value, condition.op
     if actual is None:
         return False
+    if isinstance(actual, date) and op in {"gt", "gte", "lt", "lte", "between"}:
+        bounds = [date.fromisoformat(v) if isinstance(v, str) else v for v in (value if op == "between" else [value])]
+        if op == "between":
+            return bounds[0] <= actual <= bounds[1]
+        return {"gt": lambda: actual > bounds[0], "gte": lambda: actual >= bounds[0],
+                "lt": lambda: actual < bounds[0], "lte": lambda: actual <= bounds[0]}[op]()
     if op in ("eq", "ne"):
         return (str(actual).casefold() == str(value).casefold()) == (op == "eq")
     if op in ("in", "not_in"):
@@ -486,7 +496,8 @@ def _validate_final(report, snapshot, *, plan=None, adapter=None, normalized_row
     except ValidationError:
         audit.add("final_public_schema", False, "valid", "invalid", "response.json", "serialized response failed schema validation")
     records = snapshot.records()
-    reference = [dict(reference_row(r), _index=i) for i, r in enumerate(records)]
+    selected_timezone = json.loads(snapshot.filters_json).get("timezone", "Asia/Kolkata")
+    reference = [dict(reference_row(r, selected_timezone), _index=i) for i, r in enumerate(records)]
     rows = subset(reference, plan)
     completeness = json.loads(snapshot.completeness_json)
     raw = json.loads(snapshot.raw_json)
@@ -690,7 +701,7 @@ def repair_coverage(report, snapshot, plan, adapter):
         return
     from app.analysis.executor import make_table
     from app.models.report_schema import DisplaySection, TableBlock
-    rows = subset([reference_row(r) for r in snapshot.records()], plan)
+    rows = subset([reference_row(r, json.loads(snapshot.filters_json).get("timezone", "Asia/Kolkata")) for r in snapshot.records()], plan)
     present = {_dimension(t) for t in _tables(report.model_dump(mode="json"))}
     additions = []
     for index, spec in enumerate(plan.tables):

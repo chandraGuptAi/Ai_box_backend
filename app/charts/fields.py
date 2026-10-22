@@ -85,6 +85,9 @@ _SHIPPED = _is("in_transit", "delivered", "rto", "exception", "lost")
 
 def _shipment_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
     from app.prompts.shipment_prompt import extract_orders, parse_order, _lookup, _flatten, scrub_text, extended_shipment_fields
+    from app.prompts.shipment_prompt import manifest_calendar_day, normalize_shipment_status
+    from app.analysis.completeness import selected_filters
+    selected_timezone = selected_filters(None, data).timezone
     rows = []
     for index, record in enumerate(extract_orders(data)):
         order = parse_order(record)
@@ -96,6 +99,8 @@ def _shipment_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
             "awb_number": order.awb_number,
             "status_category": order.category,
             "status": order.status,
+            "shipment_status": normalize_shipment_status(order.status),
+            "manifest_datetime": manifest_calendar_day(record, selected_timezone),
             "courier": order.courier,
             "payment_mode": order.payment_mode,
             "cancellation_reason": order.cancellation_reason,
@@ -123,6 +128,8 @@ SHIPMENT_ADAPTER = DatasetAdapter(
     report_type="shipment",
     record_label="Orders",
     fields={f.name: f for f in (
+        FieldSpec("manifest_datetime", "date", "Manifest Date (selected local timezone)", (r"manifest(?:ed)? date",)),
+        FieldSpec("shipment_status", "category", "Shipment Status (detailed)", (r"\bofd\b", r"out for delivery")),
         FieldSpec("delivery_days", "number", "Order-to-delivery days (consistent delivered records only)", ()),
         FieldSpec("pickup_date", "date", "Pickup Date", ()),
         FieldSpec("delivery_date", "date", "Delivery Date", ()),

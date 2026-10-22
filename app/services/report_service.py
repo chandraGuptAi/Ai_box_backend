@@ -561,8 +561,12 @@ class ReportService:
         # Source gate: the records must be the complete, de-duplicated set for the selected filters
         # (expected = fetched = unique, all in scope) before any metric, chart or AI call.
         source = selected = None
+        authorized_source_scope = None
+        upstream_analysis_filters = []
         try:
             if request.source == "shipment_api":
+                if approved_plan is not None:
+                    request, approved_plan, upstream_analysis_filters, authorized_source_scope = self._push_source_dates(request, approved_plan)
                 request, source, selected = await self._fetch_source(request, shipment_credential)
             elif definition.report_type == "shipment":
                 selected = selected_filters(request.filters, request.data)
@@ -597,11 +601,22 @@ class ReportService:
             rows = await run_in_threadpool(adapter.rows, request.data)
             absent_filters = [f.field for f in approved_plan.filters if not any(row.get(f.field) is not None for row in rows)]
             if absent_filters:
-                raise ClarificationRequiredError("The requested analysis filter cannot be checked because its fields are unavailable.",
-                    details={"clarification_required": True, "missing_fields": sorted(set(absent_filters))})
+                # Missing data is an unavailable analysis result, not a prompt-editing task.
+                # Keep the predicate in every requested section so it is never silently ignored.
+                from app.analysis.plan import ExecutionFilter
+                unavailable = tuple(ExecutionFilter(field=f.field, op=f.op,
+                    value=list(f.value) if isinstance(f.value, tuple) else f.value)
+                    for f in approved_plan.filters if f.field in absent_filters)
+                approved_plan = replace(approved_plan,
+                    filters=tuple(f for f in approved_plan.filters if f.field not in absent_filters),
+                    sections=tuple(s.model_copy(update={"filters": (*unavailable, *s.filters),
+                        "missing_data": "explicit_unavailable"}) for s in approved_plan.sections))
             scoped, missing = matching_rows(rows, approved_plan)
             context = vocab.context(request.data)
             scope = dataset_scope(context, approved_plan, adapter, vocab, rows, scoped, missing)
+            if upstream_analysis_filters:
+                scope["authorized_source_scope"] = authorized_source_scope
+                scope["source_analysis_filters"] = upstream_analysis_filters
             if not scoped:
                 raise NoMatchingRecordsError("No data available for the selected filters and analysis.",
                     details={"matching_records": 0, "selected_filters": selected.to_dict() if selected else None})
@@ -935,6 +950,55 @@ class ReportService:
                                             analysis_rows=scoped_rows, block_on_failure=self._settings.report_accuracy_strict)
         return report
 
+    def _push_source_dates(self, request, plan):
+        """Push only shared date predicates into the authorized API window.
+
+        An API response need not repeat manifest_datetime. A backend-owned date query
+        already applies that predicate; do not attempt to reapply it to absent fields.
+        Section-local dates stay local so comparisons and denominators remain intact.
+        """
+        from datetime import date
+        start, end = request.filters.from_date, request.filters.to_date
+        applied, local = [], []
+        for condition in plan.filters:
+            if condition.field != request.filters.date_field or condition.op not in {"eq", "between", "gte", "gt", "lte", "lt"}:
+                local.append(condition)
+                continue
+            values = condition.value if isinstance(condition.value, (list, tuple)) else [condition.value]
+            bounds = [date.fromisoformat(v) for v in values]
+            if condition.op in {"between", "eq", "gte", "gt"}:
+                lower = bounds[0] + (timedelta(days=1) if condition.op == "gt" else timedelta())
+                start = max(start, lower)
+            if condition.op in {"between", "eq", "lte", "lt"}:
+                upper = bounds[-1] - (timedelta(days=1) if condition.op == "lt" else timedelta())
+                end = min(end, upper)
+            applied.append({"field": condition.field, "op": condition.op, "value": list(values) if condition.op == "between" else values[0], "applied_by": "shipment_api"})
+        if start > end:
+            raise NoMatchingRecordsError("No data available for the requested date range.", details={"matching_records": 0})
+        from app.analysis.executor import _matches
+        adapter = get_adapter("shipment")
+        source_field = request.filters.date_field
+        sections = []
+        for section in plan.sections:
+            # A section predicate already guaranteed by the complete source window
+            # does not require a second copy of that date in each returned row.
+            section_filters = tuple(f for f in section.filters if not (
+                f.field == source_field and f.op in {"eq", "between", "gte", "gt", "lte", "lt"}
+                and _matches(start, f) and _matches(end, f)))
+            dependent_fields = set(section.dimensions) | {f.field for f in section_filters}
+            dependent_fields.update(adapter.measures[m].field for m in section.metrics if adapter.measures[m].field)
+            dependent_fields.update(field for m in section.metrics for field, _ in adapter.measures[m].where)
+            required = tuple(f for f in section.required_fields if f != source_field or f in dependent_fields)
+            sections.append(section if section_filters == section.filters and required == section.required_fields else
+                section.model_copy(update={"filters": section_filters, "required_fields": required}))
+        if not applied and all(new is old for new, old in zip(sections, plan.sections)):
+            return request, plan, [], None
+        authorized = selected_filters(request.filters, request.data or {}).to_dict()
+        filters = request.filters.model_copy(update={"from_date": start, "to_date": end, "range_days": None, "date_range": None})
+        note = f"{request.filters.date_field.replace('_', ' ').title()} filter applied by the shipment API: {start.isoformat()} to {end.isoformat()} ({request.filters.timezone})."
+        return request.model_copy(update={"filters": filters}), replace(plan, filters=tuple(local), sections=tuple(sections),
+            notes=(*plan.notes, note)), applied, authorized
+
     async def _fetch_source(self, request: ReportRequest, credential: str | None):
         """Fetch every shipment matching the selected filters and pass it through the completeness gate.
 
@@ -943,9 +1007,9 @@ class ReportService:
         """
         query = build_query(request.filters, self._settings)
         logger.info("Shipment range: request_id=%s report_id=%s field=%s timezone=%s selected=%s..%s "
-                    "days=%s from_utc=%s to_utc_exclusive=%s", request_id_var.get(), report_id_var.get(),
+                    "days=%s from_date=%s to_date_exclusive=%s", request_id_var.get(), report_id_var.get(),
                     query.date_filter_type, query.timezone, request.filters.from_date, request.filters.to_date,
-                    (request.filters.to_date - request.filters.from_date).days + 1, query.from_utc, query.to_utc)
+                    (request.filters.to_date - request.filters.from_date).days + 1, query.from_date, query.to_date)
         result = await self._source.fetch(query, delegated_credential(credential))
         filters = request.filters
         selected = SelectedFilters(from_date=filters.from_date, to_date=filters.to_date, status_label=query.status_label,
@@ -1001,6 +1065,9 @@ class ReportService:
         from app.analysis.executor import execute_ordered_sections
         from app.analysis.section_reports import narrative_messages, grounded_text, verify_section_coverage, section_title
         datasets = await run_in_threadpool(execute_ordered_sections, plan, rows)
+        if not any(value is not None for dataset in datasets for key, value in dataset.metrics.items() if ".total." in key):
+            raise NoMatchingRecordsError("No data available for the requested analysis.",
+                details={"matching_records": 0})
         texts = {d.requirement.id: [d.text] for d in datasets}
         narrative_source = "deterministic_fallback"
         try:
@@ -1025,13 +1092,14 @@ class ReportService:
             chart_notes.extend(dataset.chart_notes)
             limitations.extend(dataset.limitations)
             for key, value in dataset.metrics.items():
-                if ".total." in key:
+                if ".total." in key and value is not None:
                     label = dataset.requirement.title + ": " + adapter.measures[key.split(".total.", 1)[1]].label
                     cards.append(DisplayMetric(key=key.replace(".", "_"), label=label,
-                        value=value if value is not None else "Unavailable", unit="text"))
+                        value=value, unit="text"))
         if source:
             limitations.extend(source.limitations)
-        limitations = list(dict.fromkeys([*plan.notes, *limitations]))
+        analysis_filters = ["Analysis filter: " + f.describe(adapter, get_vocabulary("shipment")) for f in plan.filters]
+        limitations = list(dict.fromkeys([*plan.notes, *analysis_filters, *limitations]))
         from app.analysis.interpreter import concise_report_title
         title = concise_report_title(plan, adapter)
         company = request.company_name or request.data.get("company_name")

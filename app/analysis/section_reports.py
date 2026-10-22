@@ -89,9 +89,9 @@ def grounded_text(raw, datasets):
 def verify_section_coverage(report, plan, snapshot, datasets):
     """Independent raw-row recount, also checking the final serialized order and nested tables."""
     from app.analysis.accuracy import Audit, reference_row, subset, digest
-    from app.prompts.shipment_prompt import extended_shipment_fields
     audit = Audit(snapshot, report.report_id)
-    references = [dict(reference_row(r), **extended_shipment_fields(r)) for r in snapshot.records()]
+    selected_timezone = json.loads(snapshot.filters_json).get("timezone", "Asia/Kolkata")
+    references = [reference_row(r, selected_timezone) for r in snapshot.records()]
     for row in references:
         row["delivery_days"] = _duration(row) if row.get("status_category") == "delivered" else None
     rows = subset(references, plan)
@@ -154,7 +154,7 @@ def execute_registered_section(spec, rows):
     required = _required_fields(spec, adapter)
     missing = sorted(f for f in required if rows and not any(r.get(f) not in (None, "") for r in rows))
     if missing:
-        result.limitations.append("Unavailable fields: " + ", ".join(adapter.fields[f].label for f in missing) + ".")
+        result.limitations.append("Data not provided: " + ", ".join(adapter.fields[f].label for f in missing) + ".")
         if spec.missing_data == "clarify":
             raise ClarificationRequiredError("Required fields are unavailable for the requested analysis.",
                 details={"clarification_required": True, "section_id": spec.id, "missing_fields": missing})
@@ -163,11 +163,14 @@ def execute_registered_section(spec, rows):
         if any(r.get("buyer_identity_basis", "").startswith("approximate") for r in items):
             result.limitations.append("Consignee identities are approximate name/city/pincode groupings, not verified people or first-time buyers.")
     result.limitations.append(f"Section denominator: {len(items)} shipments after this section's filters. Rates use this subset within each group; averages exclude missing metric values.")
+    for condition in spec.filters:
+        result.limitations.append(f"Analysis filter: {adapter.fields[condition.field].label} {condition.op} {condition.value}.")
     if spec.ranking_metric:
         result.limitations.append(f"Ranking basis: {adapter.measures[spec.ranking_metric].label}, {spec.direction}.")
     if missing:
         result.unavailable = True
-        result.text = spec.title + " unavailable: required fields are absent from the selected source data."
+        result.text = "No data available for " + spec.title + "."
+        result.metrics[spec.id+".shipments"] = None
     elif not items:
         result.text = "No matching shipments for " + spec.title + " in the selected data."
     def metric_value(group, name):
@@ -223,7 +226,7 @@ def execute_registered_section(spec, rows):
                 datasets=[ChartDataset(label=adapter.measures[metric].label, data=[float(r[col]) for r in table.values])]))
         else:
             result.chart_notes.append(ChartNote(title=spec.title, requested_type=kind,
-                reason="Requested visual unavailable for the approved fields, metric or available results."))
+                reason="No data available for this visual using the requested fields and metric."))
     return result
 
 
@@ -285,7 +288,7 @@ def verify_registered_section(audit, spec, current, public, rows, dataset):
         same_table = top == {key: value for key, value in tables[0].items() if key != "type"}
         audit.add("export_table_"+spec.id, same_table, True, same_table, spec.id)
     public_metrics = public.get("metrics", {}).get("section_metrics", {})
-    expected_metrics = {spec.id+".shipments": len(items)}
+    expected_metrics = {spec.id+".shipments": None if missing else len(items)}
     for index, row in enumerate(expected):
         for name, value in zip(spec.metrics, row[dims:]):
             expected_metrics[f"{spec.id}.group_{index}.{name}"] = value
@@ -301,7 +304,7 @@ def verify_registered_section(audit, spec, current, public, rows, dataset):
         for name in spec.metrics:
             if card["key"] == (f"{spec.id}.total.{name}").replace(".", "_"):
                 value = expected_metrics[f"{spec.id}.total.{name}"]
-                valid = card["value"] == (value if value is not None else "Unavailable") and card["label"] == spec.title + ": " + adapter.measures[name].label
+                valid = value is not None and card["value"] == value and card["label"] == spec.title + ": " + adapter.measures[name].label
                 audit.add("metric_card_"+spec.id, valid, value, card["value"], spec.id)
     charts = [c for c in public["structured_report"].get("charts", []) if c["id"].startswith("section_"+spec.id+"_")]
     notes = public["structured_report"].get("chart_notes", [])

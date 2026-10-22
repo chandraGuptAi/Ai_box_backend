@@ -99,6 +99,17 @@ class ExecutionFilter(BaseModel):
                 raise ValueError("Invalid numeric filter")
             if (self.op == "between" and (len(values) != 2 or values[0] > values[1])) or (self.op != "between" and isinstance(self.value, list)):
                 raise ValueError("Invalid numeric bounds")
+        elif adapter.fields[self.field].kind == "date":
+            values = self.value if isinstance(self.value, list) else [self.value]
+            if self.op not in {"eq", "ne", "gt", "gte", "lt", "lte", "between"}:
+                raise ValueError("Invalid date operator")
+            if (self.op == "between" and len(values) != 2) or (self.op != "between" and isinstance(self.value, list)):
+                raise ValueError("Invalid date bounds")
+            if not all(isinstance(v, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", v) for v in values):
+                raise ValueError("Dates must use ISO YYYY-MM-DD")
+            days = [date.fromisoformat(v) for v in values]
+            if self.op == "between" and days[0] > days[1]:
+                raise ValueError("Date bounds must be ordered")
         elif adapter.fields[self.field].kind != "category" or self.op not in {"eq", "ne", "in", "not_in"}:
             raise ValueError("Only registered category/numeric analysis filters are supported")
         elif self.op in {"in", "not_in"}:
@@ -115,6 +126,11 @@ class ExecutionFilter(BaseModel):
             values = self.value if isinstance(self.value, list) else [self.value]
             if any(v not in {"pending", "completed", "unknown", "not_rto"} for v in values):
                 raise ValueError("Unknown return stage")
+        if self.field == "shipment_status":
+            from app.prompts.shipment_prompt import normalize_shipment_status
+            values = self.value if isinstance(self.value, list) else [self.value]
+            normalized = [normalize_shipment_status(v) for v in values]
+            object.__setattr__(self, "value", normalized if isinstance(self.value, list) else normalized[0])
         return self
 
 
@@ -156,6 +172,8 @@ class ExecutionSection(BaseModel):
 
 class ReportExecutionProposal(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    request_kind: Literal["general_analysis", "specific_analysis", "unrelated", "needs_clarification"] = "specific_analysis"
+    clarification_kind: Literal["optional_preferences", "scope_conflict", "missing_capability", "essential"] = "essential"
     report_title: str | None = Field(default=None, min_length=1, max_length=72)
     intent: str = Field(min_length=1, max_length=160)
     required_source: Literal["shipments"] = "shipments"
@@ -174,8 +192,10 @@ class ReportExecutionProposal(BaseModel):
             raise ValueError("Duplicate section or requirement IDs")
         if set(requirements) != set(self.requirement_ids):
             raise ValueError("Every requirement must have a section")
-        if not self.sections and not self.clarifications:
+        if not self.sections and not self.clarifications and self.request_kind not in {"general_analysis", "unrelated"}:
             raise ValueError("An accepted plan needs requested sections")
+        if not self.sections and not self.clarifications and self.request_kind == "general_analysis" and self.cohort:
+            raise ValueError("A scoped analysis needs planned sections; it cannot use a general overview default")
         return self
 
 

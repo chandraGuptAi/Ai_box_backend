@@ -139,10 +139,11 @@ def test_unavailable_fields_preserve_requested_section(dimensions, metrics):
         row["consignee"].pop("pincode", None)
         row["cancellation_reason"] = "Synthetic cancellation reason"
     report, _ = generate("Requested missing field analysis", records=records,
-        sections=[section("requested_detail", dimensions, metrics)])
-    assert ids(report) == ["requested_detail"]
-    assert "unavailable" in report.content.sections[0].content.lower()
-    assert report.tables == []
+        sections=[section("requested_detail", dimensions, metrics), section("available_volume")])
+    assert ids(report) == ["requested_detail", "available_volume"]
+    assert "No data available" in report.content.sections[0].content
+    assert all(table.id != "section_requested_detail" for table in report.tables)
+    assert all(card.value != "Unavailable" for card in report.structured_report.metrics)
     assert "Synthetic cancellation reason" not in report.content.sections[0].content
 
 
@@ -413,3 +414,233 @@ def test_invalid_plan_is_repaired_automatically_before_data_fetch():
     assert ids(report) == [s["id"] for s in EXAMPLE_SECTIONS]
     correction = json.loads(ai.calls[1][-1]["content"])
     assert correction["prompt"] == EXAMPLE and correction["validation_feedback"]
+
+
+@pytest.mark.parametrize("prompt", [
+    "Hey bro can you prepare a simple report with a graph for my shipments?",
+    "Mujhe ek report bana do aur graph bhi dikhao",
+    "mere data ki report bna do chart ke sath",
+    "मुझे एक रिपोर्ट बना दो और ग्राफ भी दिखाओ",
+    "मेरे डेटा की रिपोर्ट बनाइए और चार्ट दिखाइए",
+])
+def test_natural_multilingual_general_requests_survive_bad_planner_format(prompt):
+    ai = PlannedAI(alter_plan=lambda p: {"invalid_model_response": True})
+    report, _ = generate(prompt, ai=ai)
+    assert report.records_analyzed == 8
+    assert report.structured_report.charts[0].type == "bar"
+    assert report.structured_report.scope["selected_period"]["from_date"] == "2026-10-01"
+    assert report.generation["ai_calls"] == 3
+    assert json.loads(ai.calls[0][-1]["content"])["prompt"] == prompt
+
+
+def test_general_request_preserves_explicit_chart_style_in_fallback():
+    report, _ = generate("please make a report with a pie chart",
+        ai=PlannedAI(alter_plan=lambda p: {"invalid": True}))
+    assert report.structured_report.charts[0].type == "pie"
+
+
+def test_optional_metric_question_does_not_block_specific_analysis_or_replace_sections():
+    ai = PlannedAI(alter_plan=lambda p: {**p, "clarification_kind": "optional_preferences",
+        "clarifications": ["Which graph style would you prefer?"]})
+    report, _ = generate(ai=ai)
+    assert ids(report) == [s["id"] for s in EXAMPLE_SECTIONS]
+    assert report.generation["ai_calls"] == 2
+
+
+def test_semantically_general_wording_can_use_model_classification_without_keyword_whitelist():
+    def classify(plan):
+        return {**plan, "request_kind": "general_analysis", "sections": [], "requirement_ids": []}
+    report, _ = generate("Turn these figures into something I can understand, with a visual", ai=PlannedAI(alter_plan=classify))
+    assert ids(report) == ["dataset_overview"]
+    assert report.structured_report.charts[0].type == "bar"
+
+
+@pytest.mark.parametrize("prompt", [
+    "Show courier delivery performance with a chart",
+    "create report for last 90 days",
+    "मुझे लाभ की रिपोर्ट बनाओ",
+    "Write a romantic report about the moon",
+])
+def test_general_fallback_never_substitutes_for_specific_or_unrelated_requests(prompt):
+    from app.analysis.interpreter import general_report_request
+    assert general_report_request(prompt)[0] is False
+    with pytest.raises(AIResponseError):
+        generate(prompt, ai=PlannedAI(alter_plan=lambda p: {"invalid": True}))
+
+
+def test_unrelated_intent_returns_a_clear_response_instead_of_fabricated_report():
+    from app.errors import InvalidPromptError
+    def unrelated(plan):
+        return {**plan, "request_kind": "unrelated", "sections": [], "requirement_ids": []}
+    with pytest.raises(InvalidPromptError):
+        generate("Write a poem", ai=PlannedAI(alter_plan=unrelated))
+
+
+def test_optional_preferences_cannot_bypass_ui_scope_conflict():
+    def conflict(plan):
+        return {**plan, "clarification_kind": "optional_preferences", "clarifications": ["Which chart?"],
+            "source_scope": {**plan["source_scope"], "from_date": "2020-01-01"}}
+    with pytest.raises(ClarificationRequiredError):
+        generate("make a report with a graph", ai=PlannedAI(alter_plan=conflict))
+
+
+def test_general_classification_cannot_drop_a_specific_cohort_and_return_empty_report():
+    def empty_scoped_plan(plan):
+        return {**plan, "request_kind": "general_analysis", "sections": [], "requirement_ids": [],
+            "cohort": [{"field": "status_category", "op": "eq", "value": "delivered"}]}
+    with pytest.raises(AIResponseError):
+        generate("Show delivered performance", ai=PlannedAI(alter_plan=empty_scoped_plan))
+
+
+def test_manifest_date_subset_and_operational_statuses_from_screenshot():
+    prompt = ("Give me a status breakdown of all orders with status Pending, In Transit, Undelivered, and OFD, "
+        "where the manifested date is between 1st Sep 2026 and 10th Oct 2026.")
+    records = shipments()
+    statuses = ["Pending", "In Transit", "Undelivered", "OFD", "Out For Delivery", "Delivered", "Pending", "Undelivered"]
+    manifests = ["2026-09-01", "2026-10-10T18:29:59Z", "2026-10-10T18:30:00Z", "2026-09-15",
+        "2026-10-10T10:00:00+05:30", "2026-09-15", "2026-08-31", "2026-09-30"]
+    for row, status, manifest in zip(records, statuses, manifests):
+        row.update(status=status, manifest_datetime=manifest)
+    specs = [section("operational_breakdown", ("shipment_status",), ("orders", "share_percent"), charts=["bar"])]
+    cohort = [{"field": "shipment_status", "op": "in", "value": ["Pending", "In Transit", "Undelivered", "OFD"]},
+        {"field": "manifest_datetime", "op": "between", "value": ["2026-09-01", "2026-10-10"]}]
+    ai = PlannedAI(specs, alter_plan=lambda p: {**p, "cohort": cohort})
+    filters = {"date_field": "manifest_datetime", "from_date": "2026-08-24", "to_date": "2026-10-22",
+        "status": "All Statuses", "timezone": "Asia/Kolkata"}
+    request = ReportRequest.model_validate({"report_type": "shipment", "prompt": prompt, "data": {"orders": records},
+        "filters": filters, "expected_records": len(records)})
+    report = asyncio.run(ReportService(ai, config=replace(settings, report_ai_planner=True, report_accuracy_strict=True)).generate_report(request))
+    assert report.records_analyzed == 5
+    assert {r[0]: r[1] for r in report.tables[0].values} == {
+        "Pending": 1, "In Transit": 1, "Out For Delivery": 2, "Undelivered": 1}
+    assert sum(r[2] for r in report.tables[0].values) == 100
+    assert report.structured_report.scope["selected_period"] == filters
+    assert len(ai.calls) == 2
+
+
+@pytest.mark.parametrize("field, op, value", [
+    ("manifest_datetime", "between", ["2026-10-10", "2026-09-01"]),
+    ("manifest_datetime", "between", ["2026-09-01"]),
+    ("manifest_datetime", "gte", "2026-02-30"),
+    ("manifest_datetime", "eq", "yesterday"),
+])
+def test_invalid_date_filters_are_rejected(field, op, value):
+    from pydantic import ValidationError
+    from app.analysis.plan import ExecutionFilter
+    with pytest.raises(ValidationError):
+        ExecutionFilter(field=field, op=op, value=value)
+
+
+def test_prompt_date_filter_outside_ui_requires_clarification_before_fetch():
+    ai = PlannedAI(alter_plan=lambda p: {**p, "cohort": [
+        {"field": "manifest_datetime", "op": "between", "value": ["2026-09-01", "2026-10-10"]}]})
+    with pytest.raises(ClarificationRequiredError):
+        generate("Status breakdown from September to October", ai=ai)
+    assert len(ai.calls) == 1
+
+
+def test_missing_manifest_date_never_falls_back_to_order_date():
+    from app.charts.fields import get_adapter
+    records = shipments()
+    for row in records:
+        row.pop("manifest_datetime")
+    rows = get_adapter("shipment").rows({"orders": records})
+    assert all(row["manifest_datetime"] is None and row["order_date"] for row in rows)
+
+
+@pytest.mark.parametrize("cap", [None, 3])
+def test_backend_applies_shared_manifest_filter_upstream_when_rows_omit_it(cap):
+    import httpx
+    from app.services.shipment_source import ShipmentSource, build_query
+    from app.models.report_schema import ReportFilters
+    from tests.test_shipment_source import Upstream, TOKEN
+    records = shipments()
+    for row in records:
+        row.pop("manifest_datetime")
+    upstream = Upstream(records, cap=cap)
+    cohort = [{"field": "manifest_datetime", "op": "between", "value": ["2026-09-01", "2026-10-10"]},
+        {"field": "shipment_status", "op": "in", "value": ["Delivered", "Undelivered"]}]
+    ai = PlannedAI([section("statuses", ("shipment_status",), required_fields=["shipment_status", "manifest_datetime"],
+        filters=[cohort[0]], charts=["bar", "pie"])], alter_plan=lambda p: {**p, "cohort": cohort})
+    cfg = replace(settings, report_ai_planner=True, report_accuracy_strict=True, shipment_api_base_url="https://shipments.test")
+    filters = {"date_field": "manifest_datetime", "from_date": "2026-08-24", "to_date": "2026-10-22", "status": "All Statuses", "timezone": "Asia/Kolkata"}
+    request = ReportRequest.model_validate({"report_type": "shipment", "source": "shipment_api", "prompt": "Status breakdown for September 1 to October 10", "filters": filters})
+    service = ReportService(ai, config=cfg, source=ShipmentSource(cfg, transport=httpx.MockTransport(upstream)))
+    report = asyncio.run(service.generate_report(request, shipment_credential=TOKEN, user_id="synthetic-account"))
+    expected = build_query(ReportFilters.model_validate({**filters, "from_date": "2026-09-01", "to_date": "2026-10-10"}), cfg)
+    assert all(r["fromDate"] == expected.from_date and r["toDate"] == expected.to_date for r in upstream.requests)
+    assert all(r["type"] == 0 for r in upstream.requests)  # Status subset stays local.
+    assert report.records_analyzed == 2
+    assert len(report.tables) == 1 and len(report.structured_report.charts) == 2
+    assert report.structured_report.chart_notes == []
+    assert all(card.value != "Unavailable" for card in report.structured_report.metrics)
+    assert report.structured_report.scope["selected_period"]["from_date"] == "2026-09-01"
+    assert report.structured_report.scope["authorized_source_scope"] == filters
+    assert report.structured_report.scope["source_analysis_filters"][0]["applied_by"] == "shipment_api"
+    assert len(upstream.requests) > 2 if cap else len(upstream.requests) == 2
+
+
+def test_no_usable_analysis_returns_no_data_instead_of_an_unavailable_report():
+    from app.errors import NoMatchingRecordsError
+    records = shipments()
+    for row in records:
+        row.pop("manifest_datetime")
+    ai = PlannedAI([section("requested", ("shipment_status",))], alter_plan=lambda p: {**p, "cohort": [
+        {"field": "manifest_datetime", "op": "between", "value": ["2026-10-01", "2026-10-10"]}]})
+    with pytest.raises(NoMatchingRecordsError, match="No data available"):
+        generate(records=records, ai=ai, report_accuracy_strict=True)
+    assert len(ai.calls) == 1  # No narrative or report is generated.
+
+
+def test_section_local_date_comparisons_are_not_pushed_into_shared_source():
+    from app.analysis.plan import AnalysisPlan, ExecutionSection
+    from app.models.report_schema import ReportFilters
+    specs = [section("first", ("shipment_status",), filters=[
+        {"field": "manifest_datetime", "op": "between", "value": ["2026-10-01", "2026-10-10"]}]),
+        section("second", ("shipment_status",), filters=[
+        {"field": "manifest_datetime", "op": "between", "value": ["2026-10-11", "2026-10-21"]}])]
+    plan = AnalysisPlan(sections=tuple(ExecutionSection.model_validate(s) for s in specs))
+    request = ReportRequest(report_type="shipment", source="shipment_api", prompt="Compare two periods", filters=ReportFilters(
+        from_date="2026-10-01", to_date="2026-10-21", date_field="manifest_datetime", status="All Statuses"))
+    original, updated, pushed, _ = ReportService(PlannedAI())._push_source_dates(request, plan)
+    assert original is request and updated is plan and pushed == []
+
+
+@pytest.mark.parametrize("group_by_date", [False, True])
+def test_source_applied_date_requirement_is_removed_only_when_row_values_are_not_used(group_by_date):
+    from app.analysis.plan import AnalysisPlan, ExecutionSection
+    specs = [section("breakdown", ("manifest_datetime",) if group_by_date else ("shipment_status",),
+        required_fields=["manifest_datetime"])]
+    plan = AnalysisPlan(sections=tuple(ExecutionSection.model_validate(s) for s in specs))
+    request = ReportRequest.model_validate({"report_type": "shipment", "source": "shipment_api", "prompt": "Status breakdown",
+        "filters": {"date_field": "manifest_datetime", "from_date": "2026-10-01", "to_date": "2026-10-21", "status": "All Statuses"}})
+    _, updated, _, _ = ReportService(PlannedAI())._push_source_dates(request, plan)
+    assert ("manifest_datetime" in updated.sections[0].required_fields) is group_by_date
+
+
+def test_missing_kpi_is_omitted_and_available_later_metrics_fill_the_cards():
+    specs = [section("missing_trend", ("manifest_datetime",)), section("couriers", ("courier",)),
+        section("zero_returns", ("courier",), filters=[{"field": "rto_stage", "op": "eq", "value": "pending"}]),
+        section("cities", ("destination_city",))]
+    records = shipments()
+    for row in records:
+        row.pop("manifest_datetime")
+        row["status"] = "Delivered"
+    report, _ = generate(records=records, sections=specs, report_accuracy_strict=True)
+    cards = report.structured_report.metrics
+    assert len(cards) == 3
+    assert all("missing_trend" not in c.key and c.value != "Unavailable" for c in cards)
+    assert next(c for c in cards if c.key.startswith("zero_returns")).value == 0
+    assert [c.value for c in report.key_metrics] == ["8.0", "0.0", "8.0"]
+
+
+def test_pdf_and_word_do_not_show_unavailable_metric_cards():
+    from app.generators.pdf_generator import generate_pdf
+    from app.generators.docx_generator import generate_docx
+    records = shipments()
+    for row in records: row.pop("manifest_datetime")
+    report, _ = generate(records=records, sections=[section("missing_trend", ("manifest_datetime",)), section("couriers", ("courier",))])
+    word = " ".join(p.text for p in Document(BytesIO(generate_docx(report))).paragraphs)
+    pdf = " ".join(p.extract_text() for p in PdfReader(BytesIO(generate_pdf(report))).pages)
+    assert "Unavailable" not in word and "Unavailable" not in pdf
+    assert "No data available" in word and "No data available" in pdf

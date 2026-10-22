@@ -201,8 +201,8 @@ Upstream calls, all with identical filters and the caller's token:
    fetch is retried `SHIPMENT_API_FETCH_ATTEMPTS` times, then fails. Rows are never truncated.
 
 Request mapping (from the existing Angular integration): `type` = status code; `fromDate`/`toDate` = local midnight
-of `from_date` and of the day after `to_date` (exclusive end), in UTC as `YYYY-MM-DD HH:MM:SS`; `date_filter_type` =
-`date_field`; `only_order_stats` = 0; `segment_type` = `SHIPMENT_API_SEGMENT_TYPE`; every search field empty.
+of `from_date` and of the day after `to_date` (exclusive end), in IST (`Asia/Kolkata`) as `YYYY-MM-DD HH:MM:SS`; `date_filter_type` =
+`date_field`; `only_order_stats` = 0; `segment_type` = `domestic` (set in backend code, independent of `.env`); every search field empty.
 
 Success: the normal report. The coverage audit record's `completeness` adds `source: "shipment_api"`, `fetched_at`,
 `upstream_requests`, `page_size`, `pages`, `fetch_attempts`, `page_size_clamped`, `upstream_query`,

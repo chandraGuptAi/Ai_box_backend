@@ -220,6 +220,8 @@ class ReportRequest(BaseModel):
             raise ValueError("source 'shipment_api' supports report_type 'shipment' only")
         if self.filters is None or self.filters.from_date is None or self.filters.to_date is None:
             raise ValueError("filters.from_date and filters.to_date are required when source is 'shipment_api'")
+        if "date_field" not in self.filters.model_fields_set:
+            self.filters = self.filters.model_copy(update={"date_field": "manifest_datetime"})
         return self
 
 

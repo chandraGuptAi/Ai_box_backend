@@ -113,6 +113,7 @@ def test_count_then_one_full_page(run, ai, coverage_audit):
     assert strip[0]["only_order_stats"] == 0 and "total" not in strip[0]
     assert {h["authorization"] for h in upstream.headers} == {TOKEN}
     assert all("x-user-id" not in h for h in upstream.headers)  # AI Box identity is never forwarded
+
     assert "completeness" not in report.structured_report.scope  # audit data, not report content
     record = coverage_audit[-1]
     assert record["outcome"] == "generated" and record["report_id"] == report.report_id
@@ -123,6 +124,37 @@ def test_count_then_one_full_page(run, ai, coverage_audit):
     assert completeness["status"] == "complete" and completeness["source"] == "shipment_api"
     assert completeness["fetched_at"] and completeness["source_snapshot"] is None and completeness["data_as_of"] is None
     assert report.records_analyzed == 272
+
+
+def test_missing_date_field_defaults_to_manifest_on_every_upstream_call(run):
+    upstream = Upstream(rows(8))
+    filters = {key: value for key, value in FILTERS.items() if key != "date_field"}
+    response = run(upstream, body={"filters": filters})
+    assert response.status_code == 200, response.text
+    assert all(request["date_filter_type"] == "manifest_datetime" for request in upstream.requests)
+    assert response.json()["structured_report"]["scope"]["selected_period"]["date_field"] == "manifest_datetime"
+
+
+@pytest.mark.parametrize("configured", [None, "", "avio"])
+def test_domestic_segment_is_set_in_code_independently_of_environment(monkeypatch, configured):
+    from app.config import Settings
+    if configured is None:
+        monkeypatch.delenv("SHIPMENT_API_SEGMENT_TYPE", raising=False)
+    else:
+        monkeypatch.setenv("SHIPMENT_API_SEGMENT_TYPE", configured)
+    assert Settings.__dataclass_fields__["shipment_api_segment_type"].default == "domestic"
+    assert Settings.from_env().shipment_api_segment_type == "domestic"
+
+
+def test_ist_dates_and_domestic_segment_are_identical_on_count_and_data_requests(run):
+    upstream = Upstream(rows(8))
+    response = run(upstream, shipment_api_segment_type="domestic")
+    assert response.status_code == 200, response.text
+    assert len(upstream.requests) == 2
+    for request in upstream.requests:
+        assert request["segment_type"] == "domestic"
+        assert request["fromDate"] == FROM_DAY.isoformat()+" 00:00:00"
+        assert request["toDate"] == (TO_DAY+timedelta(days=1)).isoformat()+" 00:00:00"
 
 
 def test_total_records_is_the_only_total(run):
@@ -200,13 +232,13 @@ def test_conflicting_versions_of_a_shipment(run, ai):
 
 # --- Dates, statuses and verification ---------------------------------------------------------------
 
-def test_utc_boundaries_for_local_calendar_days():
+def test_ist_boundaries_for_selected_calendar_days():
     filters = ReportFilters(date_field="manifest_datetime", from_date="2026-10-01", to_date="2026-10-12",
                             timezone="Asia/Kolkata")
     query = build_query(filters, settings, today=date(2026, 10, 21))
-    assert (query.from_utc, query.to_utc) == ("2026-09-30 18:30:00", "2026-10-12 18:30:00")  # end exclusive
+    assert (query.from_date, query.to_date) == ("2026-10-01 00:00:00", "2026-10-13 00:00:00")  # end exclusive
     utc = build_query(filters.model_copy(update={"timezone": "UTC"}), settings, today=date(2026, 10, 21))
-    assert (utc.from_utc, utc.to_utc) == ("2026-10-01 00:00:00", "2026-10-13 00:00:00")
+    assert (utc.from_date, utc.to_date) == ("2026-10-01 05:30:00", "2026-10-13 05:30:00")
     assert query.status_type == 0 and query.status_label == "All Statuses"
 
 

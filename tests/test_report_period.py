@@ -31,8 +31,8 @@ def test_ui_preset_replaces_stale_explicit_dates_once(label, monkeypatch):
                             from_date="2023-05-17", to_date="2026-10-19")
     assert filters.from_date == date(2026, 8, 23) and filters.to_date == date(2026, 10, 21)
     query = build_query(filters, today=date(2026, 10, 21))
-    assert query.from_utc == "2026-08-22 18:30:00"
-    assert query.to_utc == "2026-10-21 18:30:00"  # exclusive next local midnight
+    assert query.from_date == "2026-08-23 00:00:00"
+    assert query.to_date == "2026-10-22 00:00:00"  # exclusive next local midnight
     assert query.date_filter_type == "manifest_datetime"
 
 
@@ -66,8 +66,8 @@ class DateFilteredUpstream(Upstream):
     def __call__(self, request):
         import json
         payload = json.loads(request.content)
-        start = datetime.fromisoformat(payload["fromDate"]).replace(tzinfo=timezone.utc)
-        end = datetime.fromisoformat(payload["toDate"]).replace(tzinfo=timezone.utc)
+        start = datetime.fromisoformat(payload["fromDate"]).replace(tzinfo=ZoneInfo("Asia/Kolkata"))
+        end = datetime.fromisoformat(payload["toDate"]).replace(tzinfo=ZoneInfo("Asia/Kolkata"))
         original = self.data
         self.data = [r for r in original if start <= datetime.fromisoformat(r["manifest_datetime"]) < end]
         try:
@@ -99,8 +99,8 @@ def test_60_days_fetch_and_display_selected_manifest_period_in_json_pdf_word(run
     assert public["insights"]["scope"]["from_date"] == start.isoformat()
     for request in upstream.requests:
         assert request["date_filter_type"] == "manifest_datetime"
-        assert request["fromDate"] == first.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        assert request["toDate"] == exclusive_end.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        assert request["fromDate"] == first.strftime("%Y-%m-%d %H:%M:%S")
+        assert request["toDate"] == exclusive_end.strftime("%Y-%m-%d %H:%M:%S")
     document = ReportDocument.model_validate(public)
     pdf = "\n".join(p.extract_text() for p in PdfReader(BytesIO(generate_pdf(document))).pages)
     word = "\n".join(p.text for p in Document(BytesIO(generate_docx(document))).paragraphs)

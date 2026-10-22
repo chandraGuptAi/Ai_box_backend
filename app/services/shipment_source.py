@@ -4,7 +4,7 @@ Confirmed from the existing Angular integration (ai-report.service.ts / ai-box.u
 - POST ``{base}/api/get-order-list`` with the logged-in user's ``Authorization: Bearer <token>``;
   the token decides which seller's shipments are returned (seller scope is enforced upstream).
 - ``type`` is the status filter (SHIPMENT_STATUS_TYPES below, 0 = all statuses).
-- ``fromDate``/``toDate`` are the selected local calendar days as UTC "YYYY-MM-DD HH:MM:SS",
+- ``fromDate``/``toDate`` are the selected local calendar days as IST "YYYY-MM-DD HH:MM:SS",
   start inclusive at local midnight, end exclusive at the following local midnight.
 - Rows: ``data.getOrderList``; matching total: ``data.totalRecords`` (never ``data.total``).
 
@@ -66,8 +66,8 @@ class SourceQuery:
     """The one upstream filter set; every request of a fetch sends exactly these values."""
     status_type: int
     status_label: str
-    from_utc: str
-    to_utc: str                      # exclusive
+    from_date: str
+    to_date: str                      # exclusive
     date_filter_type: str
     segment_type: str
     timezone: str
@@ -77,12 +77,12 @@ class SourceQuery:
                 "search_by_courier": "", "search_by_order_id": "", "search_awb_number": "",
                 "search_lrn_number": "", "search_by_cust_id": "", "search_by_company_name": "",
                 "search_by_seller_email": "", "only_order_stats": 0, "segment_type": self.segment_type,
-                "fromDate": self.from_utc, "toDate": self.to_utc, "date_filter_type": self.date_filter_type}
+                "fromDate": self.from_date, "toDate": self.to_date, "date_filter_type": self.date_filter_type}
 
     def describe(self) -> dict[str, Any]:
-        return {"type": self.status_type, "status": self.status_label, "fromDate": self.from_utc,
-                "toDate": self.to_utc, "toDate_exclusive": True, "date_filter_type": self.date_filter_type,
-                "segment_type": self.segment_type, "timezone": self.timezone}
+        return {"type": self.status_type, "status": self.status_label, "fromDate": self.from_date,
+                "toDate": self.to_date, "toDate_exclusive": True, "date_filter_type": self.date_filter_type,
+                "segment_type": self.segment_type, "timezone": self.timezone, "request_timezone": "Asia/Kolkata"}
 
 
 def status_label(value: str | None) -> str:
@@ -94,9 +94,9 @@ def status_label(value: str | None) -> str:
     return _STATUS_KEYS[key]
 
 
-def utc_boundary(day: date, zone: ZoneInfo) -> str:
-    """Local midnight starting ``day`` as the upstream UTC "YYYY-MM-DD HH:MM:SS" string."""
-    return datetime.combine(day, dtime(0), zone).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+def ist_boundary(day: date, zone: ZoneInfo) -> str:
+    """Local midnight starting ``day`` as the upstream IST "YYYY-MM-DD HH:MM:SS" string."""
+    return datetime.combine(day, dtime(0), zone).astimezone(ZoneInfo("Asia/Kolkata")).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def build_query(filters: Any, config: Settings = settings, today: date | None = None) -> SourceQuery:
@@ -121,7 +121,7 @@ def build_query(filters: Any, config: Settings = settings, today: date | None = 
             "Select a shorter date range.", details={"field": "from_date", "max_days": config.shipment_api_max_range_days})
     label = status_label(filters.status)
     return SourceQuery(status_type=SHIPMENT_STATUS_TYPES[label], status_label=label,
-                       from_utc=utc_boundary(start, zone), to_utc=utc_boundary(end + timedelta(days=1), zone),
+                       from_date=ist_boundary(start, zone), to_date=ist_boundary(end + timedelta(days=1), zone),
                        date_filter_type=filters.date_field, segment_type=config.shipment_api_segment_type,
                        timezone=filters.timezone)
 

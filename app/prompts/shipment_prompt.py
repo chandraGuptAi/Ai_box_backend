@@ -351,7 +351,7 @@ def categorize_status(status: str | None) -> str:
 STATUS_MAPPING = {
     **dict.fromkeys(("delivered", "delivery completed", "successfully delivered"), "delivered"),
     **dict.fromkeys(("cancelled", "canceled", "cancel", "order cancelled", "shipment cancelled"), "cancelled"),
-    **dict.fromkeys(("in transit", "out for delivery", "shipped", "dispatched", "picked up", "picked", "reached hub"), "in_transit"),
+    **dict.fromkeys(("in transit", "out for delivery", "ofd", "shipped", "dispatched", "picked up", "picked", "reached hub"), "in_transit"),
     **dict.fromkeys(("pending", "new", "booked", "pickup pending", "pickup scheduled", "not picked", "not picked up",
                      "not pickup", "unshipped", "manifested", "processing", "created", "ready to ship"), "pending"),
     **dict.fromkeys(("rto", "rto pending", "rto initiated", "rto in transit", "rto intransit", "rto delivered", "returned",
@@ -372,6 +372,23 @@ def normalize_payment(value: str | None) -> str | None:
     if "prepaid" in text or "online" in text or text == "paid":
         return "Prepaid"
     return value
+
+
+def normalize_shipment_status(value):
+    """Detailed operational status; do not collapse OFD or Undelivered into broad categories."""
+    text = re.sub(r"[\s_-]+", " ", str(value or "").strip()).casefold()
+    aliases = {"ofd": "Out For Delivery", "out for delivery": "Out For Delivery",
+               "intransit": "In Transit", "in transit": "In Transit", "pending": "Pending",
+               "undelivered": "Undelivered", "delivered": "Delivered", "cancelled": "Cancelled",
+               "canceled": "Cancelled"}
+    return aliases.get(text, scrub_text(value, 80)) if text else None
+
+
+def manifest_calendar_day(record, timezone_name="Asia/Kolkata"):
+    """Only an unambiguous manifest day in the selected timezone is usable for local filtering."""
+    from app.analysis.completeness import _candidate_days, _date_value, _zone
+    days = _candidate_days(_date_value(_flatten(record), "manifest_datetime"), _zone(timezone_name))
+    return next(iter(days)) if len(days) == 1 else None
 
 
 def extended_shipment_fields(record: dict[str, Any]) -> dict[str, Any]:

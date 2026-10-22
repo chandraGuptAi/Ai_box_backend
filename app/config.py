@@ -133,7 +133,7 @@ class Settings:
     shipment_api_max_requests: int = 30           # upstream calls per fetch attempt
     shipment_api_max_response_bytes: int = 64 * 1024 * 1024
     shipment_api_count_page_size: int = 1
-    shipment_api_segment_type: str = ""           # sent as segment_type (Angular sends "")
+    shipment_api_segment_type: str = "domestic"       # default segment for backend-owned shipment requests
     # Selectable date fields, each sent verbatim as date_filter_type. Only documented values belong here:
     # the API's default date field (no date_filter_type) is undocumented, so it is not offered.
     shipment_api_date_fields: tuple[str, ...] = ("manifest_datetime",)
@@ -192,7 +192,7 @@ class Settings:
             shipment_api_max_requests=_int("SHIPMENT_API_MAX_REQUESTS", 30, minimum=2),
             shipment_api_max_response_bytes=_int("SHIPMENT_API_MAX_RESPONSE_BYTES", 64 * 1024 * 1024, minimum=1024),
             shipment_api_count_page_size=_int("SHIPMENT_API_COUNT_PAGE_SIZE", 1, minimum=1),
-            shipment_api_segment_type=_str("SHIPMENT_API_SEGMENT_TYPE"),
+            shipment_api_segment_type="domestic",
             shipment_api_date_fields=_list("SHIPMENT_API_DATE_FIELDS", ("manifest_datetime",)),
             shipment_api_max_range_days=_int("SHIPMENT_API_MAX_RANGE_DAYS", 186, minimum=1),
         )
