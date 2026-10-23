@@ -199,6 +199,92 @@ class ReportExecutionProposal(BaseModel):
         return self
 
 
+_CHARTS = {"bar", "pie", "doughnut", "line", "area", "histogram", "scatter"}
+_CODE_KEY = re.compile(r"^(raw_|custom_)?(sql|python|code|script|query|eval|exec|lambda)(_code|_query|_script)?$", re.I)
+
+
+def salvage_proposal(raw: Any) -> tuple[Any, list[str]]:
+    """Keep the usable part of a model plan instead of rejecting the whole report.
+
+    Unregistered dimensions, metrics, required fields and charts are dropped; a section is dropped
+    only when nothing computable is left or one of its filters is invalid (computing it without that
+    filter would analyse the wrong subset). Every drop becomes a user-visible limitation.
+    Unknown keys (for example a requested highlight rule) are removed and over-long text is shortened;
+    code-like keys and invalid cohort filters are left as they are, so validation still rejects them.
+    """
+    if not isinstance(raw, dict) or not isinstance(raw.get("sections"), list):
+        return raw, []
+    if any(_CODE_KEY.search(str(key)) for item in (raw, *[s for s in raw["sections"] if isinstance(s, dict)]) for key in item):
+        return raw, []
+    from app.charts.fields import get_adapter
+    adapter = get_adapter("shipment")
+    notes: list[str] = []
+    raw = {key: value for key, value in raw.items() if key in ReportExecutionProposal.model_fields}
+    for key, limit in (("intent", 160), ("report_title", 72)):
+        if isinstance(raw.get(key), str):
+            raw[key] = raw[key][:limit].strip() or None
+    if not raw.get("intent"):
+        raw["intent"] = "shipment_analysis"
+
+    def names(items):
+        words = [" ".join(w.upper() if len(w) <= 3 else w for w in str(i).split("_")) for i in items]
+        text = words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
+        return (text[:1].upper() + text[1:]) + (" is" if len(words) == 1 else " are")
+
+    def unique(items):
+        return list(dict.fromkeys(i for i in items if isinstance(i, str)))
+
+    sections, seen = [], set()
+    for index, original in enumerate(raw["sections"]):
+        if not isinstance(original, dict):
+            continue
+        section = {key: value for key, value in original.items() if key in ExecutionSection.model_fields}
+        title = str(section.get("title") or section.get("id") or f"Section {index + 1}")[:160]
+        section["title"] = title
+        dimensions = unique(section.get("dimensions") or ())
+        missing = [d for d in dimensions if d not in adapter.fields or adapter.fields[d].kind not in {"category", "date"}]
+        if missing:
+            notes.append(f"{names(missing)} not available in the shipment data, so \"{title}\" shows overall "
+                         f"figures instead of a breakdown by {'it' if len(missing) == 1 else 'them'}.")
+        section["dimensions"] = [d for d in dimensions if d not in missing][:3]
+        metrics = unique(section.get("metrics") or ())
+        missing = [m for m in metrics if m not in adapter.measures]
+        if missing:
+            notes.append(f"{names(missing)} not available in the shipment data, so {'it is' if len(missing) == 1 else 'they are'} "
+                         f"left out of \"{title}\".")
+        section["metrics"] = [m for m in metrics if m in adapter.measures][:8]
+        if not section["metrics"]:
+            notes.append(f"\"{title}\" is not included because none of its measures are available in the shipment data.")
+            continue
+        try:
+            filters = [ExecutionFilter.model_validate(f) for f in section.get("filters") or ()]
+        except (ValueError, TypeError):
+            notes.append(f"\"{title}\" is not included because its filter could not be applied to the shipment data.")
+            continue
+        section["filters"] = filters[:8]
+        if section.get("ranking_metric") not in section["metrics"]:
+            section["ranking_metric"] = None
+        section["required_fields"] = [f for f in unique(section.get("required_fields") or ()) if f in adapter.fields][:20]
+        section["charts"] = [c for c in unique(section.get("charts") or ()) if c in _CHARTS]
+        base = re.sub(r"[^a-z0-9_]+", "_", str(section.get("id") or "").lower()).strip("_")
+        base = (base if re.match(r"[a-z]", base) else f"section_{base}".rstrip("_"))[:44]
+        section_id, n = base, 2
+        while section_id in seen:
+            section_id, n = f"{base}_{n}", n + 1
+        seen.add(section_id)
+        section["id"] = section_id
+        requirements = [r for r in unique(section.get("requirement_ids") or ()) if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", r)]
+        section["requirement_ids"] = (requirements or [f"req_{section_id}"])[:8]
+        sections.append(section)
+
+    plan = {**raw, "sections": sections}
+    # Requirements are reconciled with the sections that survived; dropped ones are described in notes.
+    plan["requirement_ids"] = unique(r for s in sections for r in s["requirement_ids"])[:40]
+    previous = raw.get("limitations") if isinstance(raw.get("limitations"), list) else []
+    plan["limitations"] = unique([*previous, *notes])[:10]
+    return plan, notes
+
+
 @dataclass(frozen=True)
 class AnalysisPlan:
     planner_calls: int = 0

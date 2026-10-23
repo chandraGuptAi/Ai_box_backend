@@ -100,8 +100,14 @@ def verify_section_coverage(report, plan, snapshot, datasets):
     ids = [s["id"] for s in sections]
     expected_ids = [s.id for s in plan.sections]
     returned_plan = (public.get("structured_report") or {}).get("plan") or {}
-    audit.add("approved_plan_preserved", returned_plan.get("sections") == [s.model_dump(mode="json") for s in plan.sections],
-        "approved current execution plan", "preserved" if returned_plan.get("sections") == [s.model_dump(mode="json") for s in plan.sections] else "changed", "structured.plan")
+    approved = [s.model_dump(mode="json") for s in plan.sections]
+    returned = returned_plan.get("sections") or []
+    # On a mismatch, name the differing section fields (never values) so the cause is visible in the log.
+    changed = [f"{a.get('id')}.{k}" for a, b in zip(approved, returned) for k in a if a.get(k) != b.get(k)]
+    if len(approved) != len(returned):
+        changed.append(f"section count {len(approved)} -> {len(returned)}")
+    audit.add("approved_plan_preserved", returned == approved,
+        "approved current execution plan", "preserved" if returned == approved else "changed: " + ", ".join(changed[:10]), "structured.plan")
     audit.add("section_order", ids == expected_ids, expected_ids, ids, "structured.sections")
     expected_table_ids = [table.id for dataset in datasets for table in dataset.tables]
     actual_table_ids = [table.get("id") for table in public.get("tables", [])]
@@ -123,6 +129,11 @@ def verify_section_coverage(report, plan, snapshot, datasets):
 
 def section_title(spec):
     return spec.title
+
+
+def card_label(title, measure_label):
+    """Section titles may be up to 160 characters; a metric card label holds at most 120."""
+    return title[:max(1, 118 - len(measure_label))].rstrip() + ": " + measure_label
 
 
 def _registered_rows(spec, rows):
@@ -304,7 +315,7 @@ def verify_registered_section(audit, spec, current, public, rows, dataset):
         for name in spec.metrics:
             if card["key"] == (f"{spec.id}.total.{name}").replace(".", "_"):
                 value = expected_metrics[f"{spec.id}.total.{name}"]
-                valid = value is not None and card["value"] == value and card["label"] == spec.title + ": " + adapter.measures[name].label
+                valid = value is not None and card["value"] == value and card["label"] == card_label(spec.title, adapter.measures[name].label)
                 audit.add("metric_card_"+spec.id, valid, value, card["value"], spec.id)
     charts = [c for c in public["structured_report"].get("charts", []) if c["id"].startswith("section_"+spec.id+"_")]
     notes = public["structured_report"].get("chart_notes", [])

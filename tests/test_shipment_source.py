@@ -100,12 +100,14 @@ def error(response, status, code):
 
 # --- Two-stage fetch --------------------------------------------------------------------------------
 
-def test_count_then_one_full_page(run, ai, coverage_audit):
+def test_count_then_pages_sized_from_the_total(run, ai, coverage_audit):
     upstream = Upstream(rows(272))
     response = run(upstream)
     assert response.status_code == 200, response.text
     report = ReportResponse.model_validate(response.json())
-    assert [(r["page"], r["perPage"]) for r in upstream.requests] == [(1, 1), (1, 272)]
+    # 272 / 4 concurrent requests, at least 100 rows, rounded up to a multiple of 16.
+    assert upstream.requests[0]["perPage"] == 1
+    assert sorted((r["page"], r["perPage"]) for r in upstream.requests[1:]) == [(1, 112), (2, 112), (3, 112)]
     # Identical filters and credential on both requests; only page/perPage differ.
     strip = [{k: v for k, v in r.items() if k not in ("page", "perPage")} for r in upstream.requests]
     assert strip[0] == strip[1]
@@ -172,7 +174,9 @@ def test_silently_capped_page_size_is_read_page_by_page(run, coverage_audit):
     upstream = Upstream(rows(272), cap=100)
     response = run(upstream)
     assert response.status_code == 200, response.text
-    assert [(r["page"], r["perPage"]) for r in upstream.requests] == [(1, 1), (1, 272), (1, 100), (2, 100), (3, 100)]
+    pairs = [(r["page"], r["perPage"]) for r in upstream.requests]
+    assert pairs[0] == (1, 1) and sorted(pairs[1:4]) == [(1, 112), (2, 112), (3, 112)]
+    assert sorted(pairs[4:]) == [(1, 100), (2, 100), (3, 100)]
     completeness = coverage_audit[-1]["completeness"]
     assert completeness["page_size_clamped"] is True and completeness["analyzed_records"] == 272
 
@@ -189,7 +193,7 @@ def test_repeated_page_fails_after_bounded_retry(run, ai):
     upstream = Upstream(data, script=lambda page, size, call, chunk: data[:size])
     body = error(run(upstream, shipment_api_max_page_size=100), 502, "upstream_pagination_inconsistent")
     assert body["retryable"] is True
-    assert len(upstream.requests) == 6  # two whole attempts of count + page 1 + page 2
+    assert len(upstream.requests) == 8  # two whole attempts of count + three concurrent pages
     assert ai.calls == 0
 
 
@@ -228,6 +232,81 @@ def test_conflicting_versions_of_a_shipment(run, ai):
     body = error(run(Upstream(data)), 502, "conflicting_records")
     assert body["retryable"] is True and body["details"]["conflicting_duplicates"] == 1
     assert ai.calls == 0
+
+
+def dated_rows(n):
+    """Rows spread over the selected days with an IST manifest time, so date windows can be served."""
+    days = (TO_DAY - FROM_DAY).days + 1
+    return [
+        {**row, "manifest_datetime": f"{(FROM_DAY + timedelta(days=i % days)).isoformat()}T10:00:00+05:30"}
+        for i, row in enumerate(rows(n))]
+
+
+class DatedUpstream(Upstream):
+    """Applies fromDate/toDate like the live API, and can reproduce its failure on deep pages."""
+
+    def __init__(self, data, *, deep_page_limit=None, ignore_dates=False, **kwargs):
+        super().__init__(data, **kwargs)
+        self.all_rows, self.deep_page_limit, self.ignore_dates = data, deep_page_limit, ignore_dates
+
+    def __call__(self, request):
+        payload = json.loads(request.content)
+        if self.deep_page_limit and (payload["page"] + 1) * payload["perPage"] > self.deep_page_limit:
+            self.requests.append(payload)
+            return httpx.Response(500, json={"message": "secret upstream text"})
+        if not self.ignore_dates:
+            stamp = lambda r: r["manifest_datetime"][:10] + " " + r["manifest_datetime"][11:19]
+            self.data = [r for r in self.all_rows if payload["fromDate"] <= stamp(r) < payload["toDate"]]
+        return super().__call__(request)
+
+
+def test_live_deep_page_failure_is_avoided_with_date_windows(run, coverage_audit):
+    # The live API returns 500 once (page + 1) * perPage passes about 1,780 rows, at any page size.
+    upstream = DatedUpstream(dated_rows(1777), deep_page_limit=1780)
+    response = run(upstream, shipment_api_max_records=5000)
+    assert response.status_code == 200, response.text
+    assert all((r["page"] + 1) * r["perPage"] <= 1780 for r in upstream.requests)
+    windows = {(r["fromDate"], r["toDate"]) for r in upstream.requests} - {(upstream.requests[0]["fromDate"],
+                                                                             upstream.requests[0]["toDate"])}
+    assert len(windows) >= 4 and len(upstream.requests) <= 12
+    assert coverage_audit[-1]["completeness"]["analyzed_records"] == 1777
+
+
+def test_window_totals_that_do_not_add_up_fall_back_to_pages(run, coverage_audit):
+    upstream = DatedUpstream(dated_rows(900), ignore_dates=True)   # every window reports the full total
+    response = run(upstream, shipment_api_max_requests=40)
+    assert response.status_code == 200, response.text
+    assert coverage_audit[-1]["completeness"]["analyzed_records"] == 900
+
+
+def test_a_failing_page_in_one_day_is_split_into_smaller_pages(run, coverage_audit):
+    upstream = DatedUpstream(dated_rows(400), deep_page_limit=300)
+    response = run(upstream, body={"filters": {**FILTERS, "from_date": TO_DAY.isoformat()}})  # one day: no windows
+    assert response.status_code == 200, response.text
+    assert coverage_audit[-1]["completeness"]["analyzed_records"] == len(upstream.data)
+
+
+def test_a_page_that_still_fails_at_the_smallest_size_is_reported(run, ai):
+    upstream = DatedUpstream(dated_rows(300), deep_page_limit=10)
+    body = error(run(upstream, shipment_api_max_requests=100), 502, "upstream_unavailable")
+    assert body["retryable"] is True and ai.calls == 0
+
+
+def test_pages_are_read_concurrently_within_the_limit(run):
+    import asyncio
+    state = {"active": 0, "peak": 0}
+    sync = Upstream(rows(480))
+
+    async def handler(request):
+        state["active"] += 1
+        state["peak"] = max(state["peak"], state["active"])
+        await asyncio.sleep(0.01)
+        state["active"] -= 1
+        return sync(request)
+
+    response = run(handler, shipment_api_concurrency=3)
+    assert response.status_code == 200, response.text
+    assert state["peak"] == 3 and len(sync.requests) == 1 + 3  # count + three pages of 160
 
 
 # --- Dates, statuses and verification ---------------------------------------------------------------

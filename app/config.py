@@ -130,6 +130,9 @@ class Settings:
     shipment_api_fetch_attempts: int = 2          # whole re-reads after the source changed mid-fetch
     shipment_api_max_records: int = 5000
     shipment_api_max_page_size: int = 5000        # largest perPage ever requested
+    shipment_api_min_page_size: int = 100         # pages are sized from the total, never below this
+    shipment_api_concurrency: int = 4             # pages read at the same time
+    shipment_api_window_records: int = 500        # larger results are read as date windows of about this size
     shipment_api_max_requests: int = 30           # upstream calls per fetch attempt
     shipment_api_max_response_bytes: int = 64 * 1024 * 1024
     shipment_api_count_page_size: int = 1
@@ -189,6 +192,9 @@ class Settings:
             shipment_api_fetch_attempts=_int("SHIPMENT_API_FETCH_ATTEMPTS", 2, minimum=1),
             shipment_api_max_records=_int("SHIPMENT_API_MAX_RECORDS", 5000, minimum=1),
             shipment_api_max_page_size=_int("SHIPMENT_API_MAX_PAGE_SIZE", 5000, minimum=1),
+            shipment_api_min_page_size=_int("SHIPMENT_API_MIN_PAGE_SIZE", 100, minimum=1),
+            shipment_api_concurrency=_int("SHIPMENT_API_CONCURRENCY", 4, minimum=1),
+            shipment_api_window_records=_int("SHIPMENT_API_WINDOW_RECORDS", 500, minimum=1),
             shipment_api_max_requests=_int("SHIPMENT_API_MAX_REQUESTS", 30, minimum=2),
             shipment_api_max_response_bytes=_int("SHIPMENT_API_MAX_RESPONSE_BYTES", 64 * 1024 * 1024, minimum=1024),
             shipment_api_count_page_size=_int("SHIPMENT_API_COUNT_PAGE_SIZE", 1, minimum=1),

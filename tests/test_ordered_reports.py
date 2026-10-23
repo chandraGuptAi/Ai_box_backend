@@ -168,18 +168,67 @@ def test_narrative_failure_preserves_all_approved_tables():
     assert fallback.generation["narrative_source"] == "deterministic_fallback"
 
 
-@pytest.mark.parametrize("defect", ["unknown_metric", "sql", "unknown_dimension", "missing_requirement", "duplicate_id", "invalid_filter"])
+@pytest.mark.parametrize("defect", ["sql", "invalid_cohort"])
 def test_invalid_plans_never_fetch_or_publish(defect):
     def alter(plan):
-        if defect == "unknown_metric": plan["sections"][0]["metrics"] = ["profit_python"]
-        elif defect == "sql": plan["sql"] = "SELECT *"
-        elif defect == "unknown_dimension": plan["sections"][0]["dimensions"] = ["invented_dimension"]
-        elif defect == "missing_requirement": plan["sections"].pop()
-        elif defect == "duplicate_id": plan["sections"][1]["id"] = plan["sections"][0]["id"]
-        else: plan["sections"][0]["filters"] = [{"field": "charge", "op": "between", "value": [10]}]
+        if defect == "sql": plan["sql"] = "SELECT *"
+        else: plan["cohort"] = [{"field": "charge", "op": "between", "value": [10]}]
         return plan
     with pytest.raises(AIResponseError):
         generate(ai=PlannedAI(alter_plan=alter))
+
+
+@pytest.mark.parametrize("defect, kept, note", [
+    ("unknown_metric", ["returns_waiting", "partner_volume", "postal_destinations"], "Profit python is not available"),
+    ("unknown_dimension", [s["id"] for s in EXAMPLE_SECTIONS], "Invented dimension is not available"),
+    ("missing_requirement", [s["id"] for s in EXAMPLE_SECTIONS[:-1]], None),
+    ("duplicate_id", ["recipient_overview", "recipient_overview_2", "partner_volume", "postal_destinations"], None),
+    ("invalid_filter", ["returns_waiting", "partner_volume", "postal_destinations"], "its filter could not be applied"),
+    ("sku_grouping", [s["id"] for s in EXAMPLE_SECTIONS], "Product name and SKU are not available"),
+    ("extra_keys", [s["id"] for s in EXAMPLE_SECTIONS], None),
+    ("long_text", [s["id"] for s in EXAMPLE_SECTIONS], None),
+])
+def test_invalid_plan_parts_are_dropped_and_the_rest_is_reported(defect, kept, note):
+    def alter(plan):
+        if defect == "unknown_metric": plan["sections"][0]["metrics"] = ["profit_python"]
+        elif defect == "unknown_dimension": plan["sections"][0]["dimensions"] = ["invented_dimension"]
+        elif defect == "missing_requirement": plan["sections"].pop()
+        elif defect == "duplicate_id": plan["sections"][1]["id"] = plan["sections"][0]["id"]
+        elif defect == "sku_grouping": plan["sections"][0]["dimensions"] = ["product_name", "sku"]
+        elif defect == "extra_keys":
+            plan["highlight_rule"] = "red line when freight > 110% of invoice"
+            plan["sections"][0]["row_highlight"] = {"color": "red"}
+        elif defect == "long_text":
+            plan["intent"] = "x" * 400
+            plan["sections"][0]["title"] = "y" * 400
+        else: plan["sections"][0]["filters"] = [{"field": "charge", "op": "between", "value": [10]}]
+        return plan
+    ai = PlannedAI(alter_plan=alter)
+    report, _ = generate(ai=ai)
+    assert ids(report) == kept
+    assert ai.events[0] == "plan" and ai.events.count("plan") == 1  # salvaged without a second planning call
+    if note:
+        assert note in json.dumps(report.model_dump(mode="json"))
+
+
+def test_requested_flagged_section_is_reworded_not_hidden_or_blocked():
+    def flagged(plan):
+        plan["sections"][0].update(id="flagged_skus", title="SKUs Flagged for High Freight",
+                                   requirement_ids=["req_flagged_skus"])
+        plan["requirement_ids"] = [r for s in plan["sections"] for r in s["requirement_ids"]]
+        return plan
+    report, _ = generate(ai=PlannedAI(alter_plan=flagged))
+    assert ids(report) == ["marked_skus"] + [s["id"] for s in EXAMPLE_SECTIONS[1:]]
+    assert report.structured_report.sections[0].title == "SKUs Marked for High Freight"
+
+
+def test_missing_capability_question_is_reported_as_limitation_not_blocking():
+    question = "SKU is not in the shipment data, so the SKU breakdown cannot be shown."
+    def missing(plan):
+        return {**plan, "clarification_kind": "missing_capability", "clarifications": [question]}
+    report, _ = generate(ai=PlannedAI(alter_plan=missing))
+    assert ids(report) == [s["id"] for s in EXAMPLE_SECTIONS]
+    assert question in json.dumps(report.model_dump(mode="json"))
 
 
 @pytest.mark.parametrize("alter", [

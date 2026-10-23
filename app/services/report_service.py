@@ -1096,7 +1096,7 @@ class ReportService:
     async def _generate_section_report(self, request, plan, scope, rows, snapshot, source, selected, adapter, planner_calls):
         """Render the approved AnalysisPlan sections; generic templates never enter this path."""
         from app.analysis.executor import execute_ordered_sections
-        from app.analysis.section_reports import narrative_messages, grounded_text, verify_section_coverage, section_title
+        from app.analysis.section_reports import narrative_messages, grounded_text, verify_section_coverage, section_title, card_label
         datasets = await run_in_threadpool(execute_ordered_sections, plan, rows)
         if not any(value is not None for dataset in datasets for key, value in dataset.metrics.items() if ".total." in key):
             raise NoMatchingRecordsError("No data available for the requested analysis.",
@@ -1126,7 +1126,7 @@ class ReportService:
             limitations.extend(dataset.limitations)
             for key, value in dataset.metrics.items():
                 if ".total." in key and value is not None:
-                    label = dataset.requirement.title + ": " + adapter.measures[key.split(".total.", 1)[1]].label
+                    label = card_label(dataset.requirement.title, adapter.measures[key.split(".total.", 1)[1]].label)
                     cards.append(DisplayMetric(key=key.replace(".", "_"), label=label,
                         value=value, unit="text"))
         if source:
