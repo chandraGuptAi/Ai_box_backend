@@ -15,6 +15,7 @@ from app.skills.prompt_skill import prompt_skill
 from app.prompts.registry import get_report_definition
 from app.services.report_service import ReportService
 from app.api.report_routes import get_report_service
+from app.errors import AIPrivacyError
 
 router = APIRouter(prefix="/api/skills/charts", tags=["Skills - Charts"])
 prompt_router = APIRouter(prefix="/api/skills/prompt", tags=["Skills - Prompts"])
@@ -155,6 +156,8 @@ async def validate_user_prompt(
             )
             if ai_suggs:
                 res.suggested_prompts = ai_suggs
+        except AIPrivacyError:
+            raise
         except Exception:
             pass
     return ValidatePromptResponse(**res.to_dict())
@@ -186,6 +189,8 @@ async def get_data_tailored_prompt_suggestions(
             )
             if ai_suggs:
                 suggestions = ai_suggs
+        except AIPrivacyError:
+            raise
         except Exception:
             pass
     return {"report_type": req.report_type, "suggestions": suggestions}

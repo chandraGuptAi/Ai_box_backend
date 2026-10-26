@@ -26,7 +26,7 @@ from app.analysis import (ai_plan_messages, annotate_table, build_plan_tables, d
                           matching_rows, merge_ai_plan, plan_narrative, remove_false_absence_claims, verify_report)
 from app.analysis.completeness import SelectedFilters, check_source, selected_filters, with_report_filter
 from app.analysis.accuracy import DatasetSnapshot, validate_final, verify_revision, seal, digest, immutable_data
-from app.errors import NoMatchingRecordsError
+from app.errors import NoMatchingRecordsError, AIPrivacyError
 from app.services.shipment_source import ShipmentSource, build_query, delegated_credential
 from app.analysis.interpreter import report_title
 from app.config import BASE_DIR, Settings, settings
@@ -140,6 +140,7 @@ def _coverage_record(request, user_id, outcome, *, report_id=None, completeness=
 
 DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 PDF_MEDIA_TYPE = "application/pdf"
+PPTX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 
 
 # Private, bounded, process-local store. A token grants access to exactly one report.
@@ -488,8 +489,10 @@ class ReportService:
                 if len(cleaned) >= 2:
                     logger.info("DeepSeek generated %d data-tailored prompt suggestions.", len(cleaned))
                     return cleaned[:4]
-        except Exception as exc:
-            logger.warning("Could not generate AI prompt suggestions via DeepSeek: %s", exc)
+        except AIPrivacyError:
+            raise
+        except Exception:
+            logger.warning("Could not generate AI prompt suggestions via DeepSeek (details withheld).")
 
         return None
 
@@ -501,14 +504,23 @@ class ReportService:
         started = time.monotonic()
         report = None
         outcome, error_code = "cancelled", None
+        error_details = {}
+        from app.security.privacy import privacy_context
+        privacy = privacy_context(request.model_dump(mode="json"), {"seller_id": user_id,
+                                  "access_token": shipment_credential})
         try:
-            report = await self._generate_report(request, shipment_credential=shipment_credential, user_id=user_id)
+            with privacy:
+                report = await self._generate_report(request, shipment_credential=shipment_credential, user_id=user_id)
             outcome = "generated"
             return report
         except Exception as exc:
             outcome = "failed"
             error_code = exc.code if isinstance(exc, AppError) else (
                 f"http_{exc.status_code}" if isinstance(exc, HTTPException) else "internal_error")
+            if isinstance(exc, NoMatchingRecordsError) and isinstance(exc.details, dict):
+                # Counts and fixed reason codes only; never raw records or prompts.
+                error_details = {key: exc.details[key] for key in ("reason", "source_records", "pincode_records")
+                                 if key in exc.details}
             raise
         finally:
             try:
@@ -516,20 +528,17 @@ class ReportService:
                 write_report_activity({
                     "event": "report_generation", "request_id": request_id_var.get(),
                     "report_id": report.report_id if report else report_id_var.get(),
-                    "seller_id": user_id, "user_id": user_id,
-                    "customer_id": report.customer_id if report else request.customer_id,
-                    "company_name": request.company_name,
-                    "prompt": request.prompt, "report_type": request.report_type, "source": request.source,
+                    "report_type": request.report_type, "source": request.source,
                     "started_at": started_at.isoformat(), "completed_at": completed_at.isoformat(),
                     "started_at_ist": started_at.astimezone(_IST).isoformat(),
                     "duration_ms": round((time.monotonic() - started) * 1000),
                     "outcome": outcome, "error_code": error_code,
-                    "filters": request.filters.model_dump(mode="json") if request.filters else None,
-                    "date_range": request.date_range, "allow_partial": request.allow_partial,
+                    **error_details,
+                    "allow_partial": request.allow_partial,
                     "is_follow_up": request.previous_report is not None,
                     "previous_report_id": (request.previous_report or {}).get("report_id"),
                     "records_analyzed": report.records_analyzed if report else None,
-                    "generation": report.generation if report else None,
+                    "ai_calls": (report.generation or {}).get("ai_calls") if report else None,
                 })
             finally:
                 report_id_var.reset(report_token)
@@ -629,9 +638,18 @@ class ReportService:
             request = request.model_copy(update={"data": immutable_data(json.loads(snapshot.data_json))})
 
         if approved_plan is not None:
+            approved_plan = self._pincode_scope(approved_plan, request)
             adapter = get_adapter(definition.report_type)
             vocab = get_vocabulary(definition.report_type)
             rows = await run_in_threadpool(adapter.rows, request.data)
+            if any(f.field == "destination_pincode" for f in approved_plan.filters) and not any(
+                    row.get("destination_pincode") is not None for row in rows):
+                raise NoMatchingRecordsError(
+                    f"{len(rows):,} shipments were received, but none contains a valid destination pincode. "
+                    "Pincode analysis cannot be generated from these records.",
+                    details={"reason": "required_fields_missing", "source_records": len(rows), "pincode_records": 0,
+                             "missing_fields": ["destination_pincode"], "matching_records": 0,
+                             "selected_filters": selected.to_dict() if selected else None})
             absent_filters = [f.field for f in approved_plan.filters if not any(row.get(f.field) is not None for row in rows)]
             if absent_filters:
                 # Missing data is an unavailable analysis result, not a prompt-editing task.
@@ -652,7 +670,9 @@ class ReportService:
                 scope["source_analysis_filters"] = upstream_analysis_filters
             if not scoped:
                 raise NoMatchingRecordsError("No data available for the selected filters and analysis.",
-                    details={"matching_records": 0, "selected_filters": selected.to_dict() if selected else None})
+                    details={"reason": "analysis_filters_no_match", "source_records": len(rows),
+                             "pincode_records": sum(r.get("destination_pincode") is not None for r in rows),
+                             "matching_records": 0, "selected_filters": selected.to_dict() if selected else None})
             return await self._generate_section_report(request, approved_plan, scope, scoped, snapshot, source,
                                                        selected, adapter, approved_plan.planner_calls)
 
@@ -1044,9 +1064,11 @@ class ReportService:
                     query.date_filter_type, query.timezone, request.filters.from_date, request.filters.to_date,
                     (request.filters.to_date - request.filters.from_date).days + 1, query.from_date, query.to_date)
         result = await self._source.fetch(query, delegated_credential(credential))
+        from app.security.privacy import register_source_identities
+        register_source_identities(result.rows)
         filters = request.filters
         selected = SelectedFilters(from_date=filters.from_date, to_date=filters.to_date, status_label=query.status_label,
-                                   date_field=filters.date_field, timezone=filters.timezone)
+                                   date_field=filters.date_field, timezone=filters.timezone, pincodes=tuple(filters.pincodes))
         today = datetime.now(ZoneInfo(filters.timezone)).date().isoformat()
         data: dict[str, Any] = {"getOrderList": {"data": result.rows, "total": result.total}, "as_of": today}
         if result.account_summary:
@@ -1099,8 +1121,16 @@ class ReportService:
         from app.analysis.section_reports import narrative_messages, grounded_text, verify_section_coverage, section_title, card_label
         datasets = await run_in_threadpool(execute_ordered_sections, plan, rows)
         if not any(value is not None for dataset in datasets for key, value in dataset.metrics.items() if ".total." in key):
-            raise NoMatchingRecordsError("No data available for the requested analysis.",
-                details={"matching_records": 0})
+            from app.analysis.section_reports import _required_fields
+            missing = sorted({field for spec in plan.sections for field in _required_fields(spec, adapter)
+                              if not any(row.get(field) not in (None, "") for row in rows)})
+            labels = ", ".join(adapter.fields[field].label for field in missing)
+            raise NoMatchingRecordsError(
+                f"{len(rows):,} shipments were received, but the requested analysis data is unavailable"
+                + (f": {labels}." if labels else ".") + " No report was created.",
+                details={"reason": "required_fields_missing" if missing else "analysis_data_unavailable",
+                         "source_records": len(rows), "missing_fields": missing, "matching_records": 0,
+                         "selected_filters": selected.to_dict() if selected else None})
         texts = {d.requirement.id: [d.text] for d in datasets}
         narrative_source = "deterministic_fallback"
         try:
@@ -1108,6 +1138,8 @@ class ReportService:
                                                 max_tokens=self._settings.deepseek_max_output_tokens)
             texts, repaired = grounded_text(raw, datasets)
             narrative_source = "ai_repaired" if repaired else "ai"
+        except AIPrivacyError:
+            raise
         except (AppError, ValidationError, ValueError, TypeError):
             logger.warning("Grounded narrative unavailable; preserving the approved section datasets. request_id=%s",
                            request_id_var.get())
@@ -1171,12 +1203,28 @@ class ReportService:
                                                  completeness=source.completeness, notes=source.limitations))
         return report
 
+    def _pincode_scope(self, plan, request):
+        """Enforce UI PIN scope independently of model output in both planning modes."""
+        from app.analysis.plan import Filter
+        from app.analysis.interpreter import pincode_filters
+        selected = selected_filters(request.filters, request.data or {})
+        predicates = []
+        if selected.pincodes:
+            predicates.append(Filter("destination_pincode", "in", selected.pincodes, "Selected pincodes"))
+        predicates.extend(pincode_filters(request.prompt or ""))
+        existing = list(plan.filters)
+        for predicate in predicates:
+            if not any(f.field == predicate.field and f.op == predicate.op and f.value == predicate.value for f in existing):
+                existing.append(predicate)
+        return replace(plan, filters=tuple(existing))
+
     async def _build_plan(self, request, vocab, adapter, intent, chart_plan, account_scope="payload"):
         """(plan, scope, scoped rows, kept record indexes or None, planner AI calls) for this request only."""
         rows = await run_in_threadpool(adapter.rows, request.data)
         context = await run_in_threadpool(vocab.context, request.data)
         plan = interpret(request.prompt or "", vocab=vocab, adapter=adapter, rows=rows, context=context, intent=intent,
                          chart_requested=bool(chart_plan.requests))
+        plan = self._pincode_scope(plan, request)
         calls = 0
         if not plan.answerable:
             reasons = [u.reason for u in plan.unsupported] or ["The request does not name anything the data contains."]
@@ -1458,6 +1506,19 @@ class ReportService:
 
     def export_docx(self, document: ReportDocument) -> tuple[bytes, str]:
         return self._export(document, generate_docx, "docx")
+
+    def export_pptx(self, document: ReportDocument) -> tuple[bytes, str]:
+        from app.generators.pptx_generator import generate_pptx
+        return self._export(document, generate_pptx, "pptx")
+
+    def preview_pptx(self, document: ReportDocument) -> dict:
+        from app.generators.presentation_layout import preview_pptx
+        if document.report_type == "shipment":
+            verify_revision(document)
+        try:
+            return preview_pptx(document)
+        except Exception as exc:
+            raise ReportExportError("Could not prepare the PowerPoint preview.") from exc
 
     def export_pdf(self, document: ReportDocument) -> tuple[bytes, str]:
         return self._export(document, generate_pdf, "pdf")

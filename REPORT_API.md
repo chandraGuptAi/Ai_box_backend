@@ -339,3 +339,138 @@ The historical schema log contained only an error count, not the response/failed
 Production trace 7f08cd627a7940b3b566ed46c1d63667 revealed that cancelled-order charges were incorrectly registered as counts, counted financial coverage labels were treated as amounts, and payment-mode monetary shorthand was treated as counts. Registry classification now explicitly includes charges_associated_with_cancelled_orders as money. Narrative classification respects count labels/parentheses/status adjectives and monetary comparison wording. "X of Y" is count coverage only when its denominator is explicitly orders/records, avoiding misclassification of monetary shares. Every value must still match evidence of the selected unit; retries and fail-closed repair remain unchanged.
 
 Safe schema/numeric/repair events are persisted in private output/report_validation.jsonl (rotation at 1 MB with two backups). Narrative context is excluded from the file; existing redacted diagnostic values, field paths, numeric comparison metrics and trace IDs are retained. Audit-write failures do not block generation. This backend path is not served over HTTP. The added regression uses values and sentences from the supplied logs; it does not substitute them into production data or constitute a new live DeepSeek test.
+
+### PowerPoint export for AI Box
+
+The existing generated report can also be downloaded as `.pptx`. No additional AI
+call or prompt skill is required: exports reuse the validated report and its
+revision receipt, just like PDF/Word. Install the updated `requirements.txt` and
+restart the backend (or rebuild its Docker image).
+
+- `POST /api/reports/export/pptx`: send the same complete report JSON accepted by
+  `/export/pdf`, including `validation_token` for shipment reports.
+- `GET /api/reports/{report_id}/download?format=pptx`: use the existing report access
+  token or owner login headers, as with PDF downloads.
+- `GET /api/reports/saved/{report_id}/download?format=pptx`: use the existing owner
+  login headers. PPTX is generated on demand, including for older saved reports;
+  no database migration is required.
+
+Frontend: add a PowerPoint option alongside PDF/Word and download the response as
+an HTTP blob using the filename in `Content-Disposition`. For PDF and PowerPoint
+together, request both formats for the same report; report generation is not
+repeated. The Angular UI is maintained outside this backend repository.
+
+Slides contain the summary, metrics, sections, findings, recommendations and
+limitations. Text and data tables are editable; charts use the existing report
+renderer and include editable source-value tables. Long text and tables continue
+across slides instead of being truncated. The output is modern `.pptx`, not legacy
+`.ppt`.
+
+### Pincode filters and shipment insights
+
+`POST /api/reports/generate` now accepts `filters.pincodes`, an optional list of
+up to 100 destination Indian PIN codes. Send strings such as
+`"pincodes": ["110001", "560001"]`. Empty/omitted means no pincode filter.
+Six-digit PINs are validated, normalized to strings and deduplicated. Malformed
+values return HTTP 422. Numeric source PINs and common consignee, destination,
+shipping-address and delivery-address pincode keys are supported; pickup/origin
+pincodes are not used as destination pincodes.
+
+Pincodes within the list are combined with OR; date, status and prompt predicates
+are combined with AND. Both planning modes enforce the UI PIN scope independently
+of AI output. The legacy `data.report_filter.pincodes` input is also supported.
+Examples of prompts:
+
+- `Analyze shipment performance for pincode 110001`
+- `Compare pincodes 110001 and 560001`
+- `Show shipment counts by pincode in a table`
+- `Exclude pincode 110001 from the shipment analysis`
+
+For `source=shipment_api`, the backend fetches the complete authorized date/status
+source before applying PIN predicates locally. No unconfirmed upstream pincode
+parameter is sent. For payload mode, supply the complete source and its matching
+`expected_records`; the report then selects the PIN cohort from those records.
+Source completeness counts describe the source before the analysis PIN filter;
+`records_analyzed` describes the matching cohort. Selected PINs are preserved in
+`structured_report.scope.selected_period.pincodes`, and applied predicates appear
+in `structured_report.plan.filters`. Missing/nonmatching selected PINs produce
+`no_matching_records`; the backend does not fall back to all shipments.
+
+The existing validated report/export flow uses the same scoped data for PDF,
+Word and PowerPoint. Frontend integration: add a multiple-pincode input and send
+its selection in `filters.pincodes`; the Angular UI is outside this repository.
+
+### AI input privacy boundary
+
+Every model request made by this backend passes through
+`app/security/privacy.py` immediately before the DeepSeek SDK call. The check
+also runs on output-budget retries and direct completion calls. Covered workflows
+include report planning/narration, report suggestions, prompt validation and
+translation. Privacy failures propagate rather than being converted into a normal
+AI fallback. No caller flag disables the boundary.
+
+Protection combines:
+
+- Request-local identities collected from seller headers, request JSON, previous
+  reports and backend-fetched shipment records. Values from sensitive fields are
+  masked wherever they reappear in model input, including free text.
+- Recursive inspection of JSON, embedded JSON and stringified JSON. Seller/name,
+  contact, address, birth date, bank, identity document and KYC subtrees are masked
+  before dispatch. Phone/email, PAN, Aadhaar-style numeric identifiers, GSTIN,
+  IFSC, passport, IBAN, UPI, credentials and document URLs have additional local
+  detection rules. Unicode digits and invisible formatting are normalized.
+- Local spaCy English and multilingual entity models for person names and
+  multiword organizations that could identify a seller. Models are installed
+  during deployment and run locally; runtime detection sends nothing externally.
+- A final residual scan before dispatch. Detector exceptions/unavailability,
+  unsupported message types, excessive depth/size, opaque encoded input and
+  ambiguous unsupported-language text block the request with HTTP 422,
+  `error.code=ai_privacy_blocked`. Hindi uses an explicit reporting vocabulary;
+  unknown Devanagari words block rather than relying on unreliable name detection.
+
+Original business data and local document branding are retained locally; only a
+sanitized copy is sent to the provider. Analytical numbers, registered operation
+identifiers and destination PIN filters are preserved where they do not conflict
+with a known private identifier. Redaction is conservative and can remove context;
+there is no restoration of private values into provider messages.
+
+Security events use logger `ai_box.security.privacy` and contain only a generated
+privacy audit ID, action, fixed reason code and category counts. They do not
+include prompts, matches, names, seller IDs, payload paths or exception bodies.
+Report activity records now retain operational metadata only. Previously written
+log files are not rewritten; apply your existing retention/access policy to them.
+
+Deployment: install the updated `requirements.txt` (includes both local model
+wheels), then restart the backend or rebuild its Docker image. Missing models
+intentionally block AI processing. No runtime model download or external PII
+analysis service is used. The gateway's independently deployed services must
+apply their own outbound guard; their internal AI calls do not run in this process.
+
+Validation uses synthetic data and a fake provider to inspect the actual outbound
+messages, including retries, context isolation and fail-closed behavior. Statistical
+name detection is not a proof that arbitrary unlabelled free text is free of PII;
+keep structured identity context available and extend the privacy regression corpus
+for new languages, KYC formats or AI integrations before enabling them. This
+mechanism does not by itself certify regulatory compliance.
+
+### PowerPoint presentation preview and layout
+
+When PowerPoint is selected in AI Box, the completed report now opens in a slide
+viewer with thumbnails, previous/next navigation, keyboard arrows and full-screen
+mode. PDF/on-screen selection retains the existing report viewer.
+
+`POST /api/reports/preview/pptx` accepts the same validated `ReportDocument` as the
+PPTX export endpoint and applies the same shipment revision check. It returns a
+1600x900 canvas size and an ordered `slides` list of `{title, image}` objects.
+Each image is a private, server-rendered SVG data URL; the response is `no-store`.
+The frontend accepts only this image format and displays it through `<img>`;
+report strings are escaped and are never inserted as executable HTML.
+
+`app/generators/presentation_layout.py` supplies one shared slide layout for both
+preview and download. The layout combines related paragraphs with their tables,
+uses a cover and clear typography, pairs charts where appropriate, and avoids
+repeating chart-data tables already present in report sections. Simple charts use
+larger presentation-scale labels. Long evidence tables continue across slides.
+Text and tables remain editable in PPTX; charts are embedded images. Full source
+summary, metric notes and the AI disclaimer remain available in slide notes.
+No additional AI calls or external document-preview service are required.

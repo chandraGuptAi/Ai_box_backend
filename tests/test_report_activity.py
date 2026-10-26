@@ -32,8 +32,9 @@ def test_generation_tracks_seller_and_result(monkeypatch, fails):
         assert asyncio.run(service.generate_report(request, user_id="s1")) is result
     assert len(records) == 1
     record = records[0]
-    assert record["seller_id"] == "s1"
-    assert record["prompt"] == request.prompt
+    assert "seller_id" not in record
+    assert "prompt" not in record
+    assert "company_name" not in record
     assert record["outcome"] == ("failed" if fails else "generated")
     assert datetime.fromisoformat(record["completed_at"]) >= datetime.fromisoformat(record["started_at"])
     assert record["request_id"] and record["report_id"]
@@ -51,7 +52,8 @@ def test_activity_file(tmp_path, monkeypatch):
         report_activity.write_report_activity({"seller_id": "s1", "prompt": "first\nsecond"})
         lines = (tmp_path / "output/report_generation_audit.jsonl").read_text().splitlines()
         assert len(lines) == 1
-        assert json.loads(lines[0])["prompt"] == "first\nsecond"
+        assert "prompt" not in json.loads(lines[0])
+        assert "seller_id" not in json.loads(lines[0])
     finally:
         for handler in audit.handlers:
             handler.close()

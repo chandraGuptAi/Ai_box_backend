@@ -1,7 +1,8 @@
 """Shipment Analysis Report: order extraction, sanitisation, metrics and prompt.
 
 Only an allow-list of operational fields is ever read from an order. Customer
-names, phone numbers, emails, addresses and pincodes are never extracted, and
+names, phone numbers, emails and addresses are never exposed; destination pincodes
+are available as categorical analysis fields, and
 free-text values are additionally scrubbed of anything that looks like an
 email address or phone number before they can reach the AI model.
 """
@@ -121,7 +122,7 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "delivery_date": ("domestictransitstatsdatedelivery", "deliverydate", "delivereddate", "deliveredat", "deliverydatetime", "deliveredon"),
     "courier_remarks": ("domestictransitstatscourierremarks", "courierremarks", "courierremark"),
     "rto_reason": ("rtoreason", "returnreason", "reasonforrto", "reasonforreturn"),
-    "destination_pincode": ("consigneepincode", "consigneepostalcode", "consigneezipcode", "destinationpincode", "deliverypincode", "pincode", "postalcode", "zipcode"),
+    "destination_pincode": ("consigneepincode", "consigneepostalcode", "consigneezipcode", "consigneepin", "consigneeaddresspincode", "shippingaddresspincode", "deliveryaddresspincode", "destinationpostalcode", "destinationpincode", "destinationpin", "deliverypincode", "deliverypin", "shippingpincode", "shippingpin", "pincode", "postalcode", "zipcode"),
     "weight": ("weightkg", "weight", "chargeableweight", "deadweight", "totalweight", "actualweight", "packageweight"),
     "order_id": ("orderid", "mastercustomorderid", "order_id", "customorderid", "id"),
     "awb_number": ("awbnumber", "awb_number", "awbno", "referencenumber", "reference_number", "lrnumber", "lr_number", "trackingnumber"),
@@ -399,8 +400,8 @@ def extended_shipment_fields(record: dict[str, Any]) -> dict[str, Any]:
     name = next((flat[k] for k in ("consigneename", "consigneecustomername", "buyername")
                  if flat.get(k) not in (None, "")), None)
     pin = _lookup(flat, "destination_pincode")
-    pin = str(pin).strip() if pin is not None else None
-    pin = pin if pin and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 -]{1,11}", pin) else None
+    from app.pincodes import normalize_pincode
+    pin = normalize_pincode(pin)
     basis = "established consignee identifier" if identifier is not None else "approximate name/city/pincode grouping" if name else "unavailable"
     key = ("id", str(identifier)) if identifier is not None else (
         "approximate", str(name).casefold().strip(), str(_lookup(flat, "destination_city") or "").casefold(), pin) if name else None
@@ -461,6 +462,7 @@ class ShipmentOrder:
 _DESTINATION_KEY = {
     "destination_city": re.compile(r"^(?:consignee|delivery|shipping|customer|drop|destination|receiver|buyer|shipto)[a-z0-9]*city$"),
     "destination_state": re.compile(r"^(?:consignee|delivery|shipping|customer|drop|destination|receiver|buyer|shipto)[a-z0-9]*state$"),
+    "destination_pincode": re.compile(r"^(?:consignee|delivery|shipping|customer|drop|destination|receiver|buyer|shipto)[a-z0-9]*(?:pincode|postalcode|zipcode|pin|zip)$"),
 }
 
 

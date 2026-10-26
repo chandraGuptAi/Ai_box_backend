@@ -37,11 +37,11 @@ def get_current_user(
     dev_fallback = settings.dev_user_id or ("102795" if (settings.environment == "development" and not is_testing) else "")
     user_id = (x_user_id or "").strip() or dev_fallback
     if not user_id:
-        logger.warning("Rejected AI Box request: no X-User-Id header (received=%r).", x_user_id)
+        logger.warning("Rejected AI Box request: no X-User-Id header.")
         raise HTTPException(status_code=401, detail="X-User-Id header is missing. The browser did not send the logged-in user ID.")
     if len(user_id) > _MAX_ID_LENGTH:
-        logger.warning("Rejected AI Box request: X-User-Id is %d characters (max %d), starts %r.",
-                       len(user_id), _MAX_ID_LENGTH, user_id[:12])
+        logger.warning("Rejected AI Box request: X-User-Id is %d characters (max %d); value withheld.",
+                       len(user_id), _MAX_ID_LENGTH)
         raise HTTPException(status_code=401,
                             detail=f"X-User-Id is {len(user_id)} characters long (max {_MAX_ID_LENGTH}); it is not a valid user ID.")
     name = (x_user_name or "").strip()[:_MAX_NAME_LENGTH] or user_id

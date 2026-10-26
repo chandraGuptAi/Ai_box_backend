@@ -21,12 +21,15 @@ from app.models.report_schema import (
     ReportTypeInfo,
     SaveReportRequest,
     RenameReportRequest,
+    TranslatePromptRequest,
+    TranslatePromptResponse,
     ValidatePromptRequest,
     ValidatePromptResponse,
 )
 from app.services.deepseek_service import DeepSeekService
+from app.services.prompt_translator_service import PromptTranslatorService
 from app.services.prompt_validator_service import PromptValidatorService
-from app.services.report_service import DOCX_MEDIA_TYPE, PDF_MEDIA_TYPE, ReportService
+from app.services.report_service import DOCX_MEDIA_TYPE, PDF_MEDIA_TYPE, PPTX_MEDIA_TYPE, ReportService
 from app.storage.user_reports import UserReports
 from fastapi import HTTPException
 
@@ -60,6 +63,23 @@ async def validate_prompt(
     validator: PromptValidatorService = Depends(get_prompt_validator_service),
 ) -> ValidatePromptResponse:
     return await validator.validate_prompt(request)
+
+
+@lru_cache
+def get_prompt_translator_service() -> PromptTranslatorService:
+    return PromptTranslatorService(DeepSeekService())
+
+
+@router.post(
+    "/translate-prompt",
+    response_model=TranslatePromptResponse,
+    summary="Rewrite a report question in Hindi (from English or Hinglish) using DeepSeek",
+)
+async def translate_prompt(
+    request: TranslatePromptRequest,
+    translator: PromptTranslatorService = Depends(get_prompt_translator_service),
+) -> TranslatePromptResponse:
+    return await translator.translate_prompt(request)
 
 
 def _file_response(content: bytes, filename: str, media_type: str) -> Response:
@@ -151,6 +171,30 @@ def export_pdf(document: ReportDocument, service: ReportService = Depends(get_re
     return _file_response(content, filename, PDF_MEDIA_TYPE)
 
 
+@router.post("/export/pptx", response_class=Response,
+             summary="Export a generated report as a PowerPoint presentation",
+             responses={200: {"content": {PPTX_MEDIA_TYPE: {}}}, **_VALIDATION_ERRORS})
+def export_pptx(document: ReportDocument, service: ReportService = Depends(get_report_service)) -> Response:
+    content, filename = service.export_pptx(document)
+    return _file_response(content, filename, PPTX_MEDIA_TYPE)
+
+
+@router.post("/preview/pptx", summary="Preview the same slides used by PowerPoint export")
+def preview_pptx(document: ReportDocument, response: Response,
+                 service: ReportService = Depends(get_report_service)) -> dict:
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return service.preview_pptx(document)
+
+
+def _export_format(service, document, format):
+    exporter, media = {"pdf": (service.export_pdf, PDF_MEDIA_TYPE),
+                       "docx": (service.export_docx, DOCX_MEDIA_TYPE),
+                       "pptx": (service.export_pptx, PPTX_MEDIA_TYPE)}[format]
+    content, filename = exporter(document)
+    return _file_response(content, filename, media)
+
+
 @router.get("/overview", summary="Get real-time AI Box dashboard analytics overview")
 def get_overview(reports: UserReports = Depends(get_user_reports)) -> dict:
     return reports.overview()
@@ -240,20 +284,21 @@ def delete_saved_report(report_id: str, reports: UserReports = Depends(get_user_
     return {"success": True, "message": "Report deleted successfully"}
 
 
-@router.get("/saved/{report_id}/download", summary="Download stored PDF or DOCX file of a saved report")
+@router.get("/saved/{report_id}/download", summary="Download PDF, DOCX or PPTX file of a saved report")
 def download_saved_file(
     report_id: str,
-    format: str = Query("pdf", pattern="^(pdf|docx)$"),
+    format: str = Query("pdf", pattern="^(pdf|docx|pptx)$"),
     reports: UserReports = Depends(get_user_reports),
     service: ReportService = Depends(get_report_service),
 ) -> Response:
-    content, filename = reports.file(report_id, format)
+    # PPTX is rendered on demand from the owner-scoped saved report JSON.
+    content, filename = (None, "") if format == "pptx" else reports.file(report_id, format)
     if not content:
         record = reports.get(report_id)
         if not record or not record.get("report"):
             raise HTTPException(status_code=404, detail="Report document not found")
         doc = ReportDocument.model_validate(record["report"])
-        content, filename = service.export_pdf(doc) if format == "pdf" else service.export_docx(doc)
+        return _export_format(service, doc, format)
     return _file_response(content, filename, PDF_MEDIA_TYPE if format == "pdf" else DOCX_MEDIA_TYPE)
 
 
@@ -264,9 +309,8 @@ def get_report(report_id: str, authorization: str | None = Header(default=None),
 
 
 @router.get("/{report_id}/download")
-def download_report(report_id: str, format: str = Query(pattern="^(pdf|docx)$"),
+def download_report(report_id: str, format: str = Query(pattern="^(pdf|docx|pptx)$"),
                     authorization: str | None = Header(default=None), user: CurrentUser | None = Depends(get_optional_user),
                     service: ReportService = Depends(get_report_service)):
     report = service.get_report(report_id, authorization, owner_id=user.id if user else None)
-    content, filename = service.export_pdf(report) if format == "pdf" else service.export_docx(report)
-    return _file_response(content, filename, PDF_MEDIA_TYPE if format == "pdf" else DOCX_MEDIA_TYPE)
+    return _export_format(service, report, format)

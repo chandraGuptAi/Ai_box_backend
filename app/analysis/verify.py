@@ -239,7 +239,9 @@ def _check_table(table: ReportTable, rows: list[dict[str, Any]], analysis: Any, 
                     return False
             for meta, cell in zip(table.column_meta[1:], values[1:]):
                 if meta.key in adapter.measures:
-                    expected = _value(cell_rows, adapter.measures[meta.key])
+                    measure = adapter.measures[meta.key]
+                    expected = (_pct(len(cell_rows), len(group_rows) if series else len(rows))
+                                if measure.agg == "share" else _value(cell_rows, measure))
                     if (expected is None) != (cell is None) or (cell is not None and not _close(cell, expected, 0.051)):
                         return False
         return True

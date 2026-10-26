@@ -11,6 +11,7 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_valida
 from app.report_visibility import customer_report
 
 from app.config import settings
+from app.pincodes import normalize_pincodes
 
 REPORT_TYPE_PATTERN = r"^[a-z][a-z0-9_]{1,49}$"
 
@@ -106,6 +107,11 @@ class ReportFilters(BaseModel):
     date_range: Text | None = Field(default=None, max_length=60,
         description="UI preset, e.g. 'Last 60 Days' or 'last_60_days'; use 'custom' with explicit dates.")
     status: Text | None = Field(default=None, max_length=60, description="Selected status label; empty or 'All' for all.")
+    pincodes: Annotated[list[str], BeforeValidator(normalize_pincodes)] = Field(
+        default_factory=list, max_length=100,
+        description="Destination Indian PIN codes. OR within this list; combined with dates, status and prompt filters. "
+                    "Applied locally after the complete seller source is fetched.",
+    )
     timezone: str = Field(default="Asia/Kolkata", max_length=60, description="IANA zone of the selected calendar days.")
 
     @model_validator(mode="after")
@@ -209,6 +215,12 @@ class ReportRequest(BaseModel):
 
     @model_validator(mode="after")
     def _one_source(self) -> ReportRequest:
+        container = self.data.get("data", self.data) if self.data else {}
+        legacy = container.get("report_filter", {}) if isinstance(container, dict) else {}
+        pins = (self.filters.pincodes if self.filters is not None else
+                normalize_pincodes(legacy.get("pincodes")) if isinstance(legacy, dict) else [])
+        if pins and self.report_type != "shipment":
+            raise ValueError("Pincode filters are supported for shipment reports only")
         if self.source == "payload":
             if self.data is None:
                 raise ValueError("data is required when source is 'payload'")
@@ -593,8 +605,20 @@ class ValidatePromptResponse(StrictModel):
     requires_clarification: bool = False
 
 
+class TranslatePromptRequest(StrictModel):
+    text: Text = Field(..., min_length=1, max_length=2000, description="Question to convert to Hindi")
+    target: Literal["hi"] = Field(default="hi", description="Target language (only Hindi for now)")
+
+
+class TranslatePromptResponse(StrictModel):
+    text: Text = Field(..., description="The question in Hindi (Devanagari)")
+    source_language: Text = Field(default="english", description="english, hindi or hinglish (heuristic)")
+
+
 ReportDocument.model_rebuild()
 ReportResponse.model_rebuild()
 ValidatePromptRequest.model_rebuild()
 ValidatePromptResponse.model_rebuild()
+TranslatePromptRequest.model_rebuild()
+TranslatePromptResponse.model_rebuild()
 

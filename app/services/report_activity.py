@@ -11,6 +11,12 @@ _lock = threading.Lock()
 
 
 def write_report_activity(record):
+    # Operational metadata only. Never persist prompts, identities or free-text
+    # notices, including when an AI privacy check blocks the request.
+    allowed = {"event", "request_id", "report_id", "report_type", "source", "started_at", "completed_at",
+               "started_at_ist", "duration_ms", "outcome", "error_code", "allow_partial", "is_follow_up",
+               "previous_report_id", "records_analyzed", "ai_calls", "reason", "source_records", "pincode_records"}
+    record = {key: value for key, value in record.items() if key in allowed}
     audit = logging.getLogger("ai_box.report_activity")
     try:
         with _lock:

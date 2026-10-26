@@ -12,6 +12,7 @@ from typing import Any
 
 from app.models.report_schema import ValidatePromptRequest, ValidatePromptResponse
 from app.services.deepseek_service import DeepSeekService
+from app.errors import AIPrivacyError
 
 logger = logging.getLogger("ai_box.prompt_validator")
 
@@ -153,8 +154,10 @@ class PromptValidatorService:
         try:
             raw_result = await self._deepseek.generate_json(messages, max_tokens=500)
             return self._parse_and_sanitize(raw_result, prompt_text, heuristic_lang, heuristic_intent)
-        except Exception as exc:
-            logger.warning("DeepSeek prompt validation unavailable (%s), using fallback heuristic.", exc)
+        except AIPrivacyError:
+            raise
+        except Exception:
+            logger.warning("DeepSeek prompt validation unavailable; using fallback heuristic (details withheld).")
             return self._heuristic_fallback(prompt_text, heuristic_lang, heuristic_intent)
 
     def _parse_and_sanitize(

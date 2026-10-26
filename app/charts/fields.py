@@ -135,7 +135,7 @@ SHIPMENT_ADAPTER = DatasetAdapter(
         FieldSpec("delivery_date", "date", "Delivery Date", ()),
         FieldSpec("courier", "category", "Courier", (r"courier", r"carrier", r"partner")),
         FieldSpec("buyer", "category", "Buyer / Consignee", (r"buyers?", r"consignees?")),
-        FieldSpec("destination_pincode", "category", "Destination Pincode", (r"pincodes?", r"postal codes?")),
+        FieldSpec("destination_pincode", "category", "Destination Pincode", (r"\bpin[- ]?codes?\b", r"\bpostal codes?\b", r"\bzip codes?\b")),
         FieldSpec("rto_stage", "category", "RTO Stage", (r"rto pending",)),
         FieldSpec("status_category", "category", "Shipment Status", (r"status", r"outcome", r"stage")),
         FieldSpec("payment_mode", "category", "Payment Mode", (r"payment", r"\bcod\b", r"prepaid", r"to\s?pay")),

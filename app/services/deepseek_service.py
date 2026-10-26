@@ -11,6 +11,8 @@ from typing import Any
 import httpx
 import openai
 from openai import AsyncOpenAI
+from starlette.concurrency import run_in_threadpool
+from app.security.privacy import guard
 
 from app.config import Settings, settings
 from app.errors import (
@@ -75,6 +77,9 @@ class DeepSeekService:
         return parsed
 
     async def _complete(self, client: AsyncOpenAI, messages: list[dict[str, str]], *, max_tokens: int | None = None) -> str:
+        # The final outbound boundary: includes every retry and direct _complete call.
+        # Inspection errors propagate before the provider SDK is invoked.
+        messages = await run_in_threadpool(guard.protect, messages)
         # httpx's read timeout is the gap between bytes, and DeepSeek sends blank keep-alive lines while a
         # non-streaming request waits, so it never fires. This is the whole call's deadline.
         started = time.monotonic()
@@ -113,7 +118,8 @@ class DeepSeekService:
                 raise AIServiceUnavailableError("The AI service is temporarily unavailable.") from exc
             raise AIServiceError(f"The AI service rejected the request (HTTP {exc.status_code}).") from exc
         except openai.OpenAIError as exc:
-            logger.exception("Unexpected DeepSeek client error.")
+            # SDK exceptions can contain provider request/response bodies.
+            logger.error("Unexpected DeepSeek client error (details withheld).")
             raise AIServiceError("Unexpected error while calling the AI service.") from exc
 
         usage = getattr(response, "usage", None)

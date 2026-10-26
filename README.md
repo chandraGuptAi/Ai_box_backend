@@ -454,3 +454,24 @@ That is all. `/generate`, the AI rules and output format, Pydantic validation, `
 
 
 See [REPORT_API.md](REPORT_API.md) for the structured report contract, protected downloads, Angular integration and storage limitations.
+
+
+## External service gateway
+
+`app/api_gateway.py` registers external services in `SERVICE_ROUTES`. WhatsApp AI
+runs in `../python-whatsapp-service`; no embedded WhatsApp runtime remains here.
+Set `ESCALATION_SERVICE_URL=http://127.0.0.1:8201` and a matching
+`ESCALATION_SERVICE_TOKEN` on both services, then restart. The optional
+`ESCALATION_GATEWAY_TIMEOUT_SECONDS` defaults to 1800. Existing `/api/escalation/...`
+paths, headers, queries, uploads and downloads are forwarded unchanged. A missing
+URL returns 503; connection errors return 502 and timeouts return 504.
+
+Add a `ServiceRoute` to `SERVICE_ROUTES` for each additional service, specifying
+its public prefix, URL/token/timeout environment variables and token header.
+Upstreams must serve the full public path including its prefix. More specific
+prefixes take precedence. The gateway replaces client-supplied service credentials.
+User identity validation remains the responsibility of the existing ERP boundary.
+Keep upstream services private. There is no embedded fallback.
+
+Existing WhatsApp databases and sessions are retained; the gateway never opens
+them. Follow the standalone service migration instructions for data cutover.

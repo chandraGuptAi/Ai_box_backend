@@ -18,6 +18,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from app.pincodes import normalize_pincodes
 from app.errors import ConflictingRecordsError, IncompleteSourceError, NoMatchingRecordsError, ScopeMismatchError
 from app.prompts.shipment_prompt import (_DATE_FORMATS, FIELD_ALIASES, _flatten, _lookup, categorize_status,
                                          extract_orders, parse_date, replace_orders, scrub_text)
@@ -40,6 +41,7 @@ class SelectedFilters:
     status_label: str | None = None
     date_field: str = "order_date"
     timezone: str = "Asia/Kolkata"
+    pincodes: tuple[str, ...] = ()
 
     @property
     def status_selected(self) -> bool:
@@ -57,7 +59,8 @@ class SelectedFilters:
         return {"date_field": self.date_field, "timezone": self.timezone,
                 "from_date": self.from_date.isoformat() if self.from_date else None,
                 "to_date": self.to_date.isoformat() if self.to_date else None,
-                "status": self.status_label or "All"}
+                "status": self.status_label or "All",
+                **({"pincodes": list(self.pincodes)} if self.pincodes else {})}
 
 
 @dataclass(frozen=True)
@@ -76,13 +79,14 @@ def selected_filters(filters: Any, data: dict[str, Any]) -> SelectedFilters:
     """Explicit request filters win; otherwise the legacy ``data.report_filter`` sent by Angular."""
     if filters is not None:
         return SelectedFilters(from_date=filters.from_date, to_date=filters.to_date, status_label=filters.status,
-                               date_field=filters.date_field, timezone=filters.timezone)
+                               date_field=filters.date_field, timezone=filters.timezone, pincodes=tuple(filters.pincodes))
     raw = _container(data).get("report_filter")
     raw = raw if isinstance(raw, dict) else {}
     return SelectedFilters(from_date=parse_date(raw.get("from_date")), to_date=parse_date(raw.get("to_date")),
                            status_label=scrub_text(raw.get("status_label") or raw.get("status"), 60),
                            date_field=str(raw.get("date_field") or "order_date"),
-                           timezone=str(raw.get("timezone") or "Asia/Kolkata"))
+                           timezone=str(raw.get("timezone") or "Asia/Kolkata"),
+                           pincodes=tuple(normalize_pincodes(raw.get("pincodes"))))
 
 
 def with_report_filter(data: dict[str, Any], selected: SelectedFilters) -> dict[str, Any]:
@@ -91,7 +95,8 @@ def with_report_filter(data: dict[str, Any], selected: SelectedFilters) -> dict[
               "to_date": selected.to_date.isoformat() if selected.to_date else None,
               "status_label": selected.status_label,
               "date_field": selected.date_field if selected.date_field != "order_date" else None,
-              "timezone": selected.timezone}
+              "timezone": selected.timezone,
+              **({"pincodes": list(selected.pincodes)} if selected.pincodes else {})}
     values = {k: v for k, v in values.items() if v}
     if isinstance(data.get("data"), dict):
         return {**data, "data": {**data["data"], "report_filter": values}}
@@ -262,6 +267,8 @@ def check_source(data: dict[str, Any], selected: SelectedFilters, *, expected_re
                      "missing_field_records": missing_dates, "ambiguous_records": ambiguous},
             "status": {"label": selected.status_label or "All", "verification": status_check,
                        "checked_records": status_checked, "not_verifiable_records": unverified if wanted else 0},
+            **({"pincodes": {"values": list(selected.pincodes), "applied_at_source": False,
+                             "verification": "deferred_to_analysis"}} if selected.pincodes else {}),
         },
         "scope_verification": ("no_filters" if not checks else "verified" if checks == {"verified"}
                                else "not_verifiable" if checks == {"not_verifiable"} else "partially_verified"),

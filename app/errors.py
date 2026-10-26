@@ -83,6 +83,13 @@ class InvalidPromptError(AppError):
     category = "validation"
 
 
+class AIPrivacyError(AppError):
+    """No model request may leave the server after a failed privacy check."""
+    status_code = 422
+    code = "ai_privacy_blocked"
+    category = "validation"
+
+
 class UnsupportedRequestError(InvalidPromptError):
     """The request is clear, but the supplied data cannot answer it (details name what is missing)."""
     code = "unsupported_request"

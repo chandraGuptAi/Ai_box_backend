@@ -254,6 +254,22 @@ def _name_filters(text: str, vocab: PlanVocabulary, rows: list[dict[str, Any]]) 
     return filters
 
 
+def pincode_filters(text: str) -> list[Filter]:
+    """Explicit PIN lists must scope the report even when the PIN is absent."""
+    include, exclude = [], []
+    token = r"[1-9][0-9]{5}(?![\w])"
+    pattern = (rf"\b(?:pin[- ]?codes?|postal codes?|zip codes?)\b\s*"
+               rf"(?:(?:is|are|in|equals?|include|including|of|for|mein|me|ke|ka|ki)\s+|[:=]\s*)*"
+               rf"(?P<values>{token}(?:\s*(?:,|/|;|and|or|aur|vs\.?|versus)\s*{token})*)")
+    for match in re.finditer(pattern, text, re.I):
+        target = exclude if _negated(text.lower(), match.start()) else include
+        target.extend(re.findall(token, match.group('values')))
+    for match in re.finditer(rf"(?<![\w])({token})\s+(?:pin[- ]?code|postal code)\b", text, re.I):
+        (exclude if _negated(text.lower(), match.start()) else include).append(match.group(1))
+    return [Filter('destination_pincode', op, tuple(dict.fromkeys(values)), 'pincode')
+            for values, op in ((include, 'in'), (exclude, 'not_in')) if values]
+
+
 def _amount(number: str, multiplier: str | None) -> float:
     value = float(number.replace(",", ""))
     if multiplier:
@@ -443,6 +459,8 @@ def interpret(prompt: str, *, vocab: PlanVocabulary, adapter: DatasetAdapter, ro
     filters = _status_filters(text, vocab) + _payment_filter(text, vocab, rows) + _name_filters(text, vocab, rows)
     numeric, unsupported = _numeric_filters(text, vocab)
     filters += numeric
+    if "destination_pincode" in adapter.fields:
+        filters += pincode_filters(text)
     # A status the intent detector already scoped (e.g. delivered-only) is always part of the plan.
     status = getattr(intent, "status", None)
     if status and not any(f.field == vocab.status_field for f in filters):
@@ -688,6 +706,9 @@ async def plan_request_before_fetch(ai, request, account_scope):
         "not status_category. OFD means Out For Delivery; broad status_category merges it into in_transit and Undelivered into exception. "
         "Top without a specified metric uses shipment count with a declared ranking; volume does not establish best performance. "
         "For city plus pincode use both dimensions, never substitute states. "
+        "Pincode means destination_pincode: a six-digit Indian PIN category, not a numeric measure. "
+        "Explicit PIN lists select a cohort (in); exclusions use not_in. Pincode-wise requests group by destination_pincode. "
+        "Preserve selected UI pincodes; sections may further narrow them but never widen them. "
         "Select ONLY requested metrics, charts and sections; no implicit financial/status sections. "
         "When a requested field, grouping or presentation is not in the registered schema, still plan every available part "
         "with registered identifiers only and name the unavailable part in limitations; do not ask a clarification for it. "

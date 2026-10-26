@@ -185,7 +185,7 @@ def test_exhausted_truncation_is_never_accepted():
     calls = []
     service._get_client = lambda: _sdk_client(responses, calls)
     with pytest.raises(AIResponseError) as error:
-        asyncio.run(service.generate_json([], max_tokens=600))
+        asyncio.run(service.generate_json([{"role": "user", "content": "Analyze shipment status"}], max_tokens=600))
     assert error.value.code == "ai_response_truncated"
     assert len(calls) == 2
 
@@ -392,7 +392,7 @@ def test_full_budget_truncation_and_invalid_json_cost_exactly_one_call():
         calls = []
         service._get_client = lambda: _sdk_client(responses, calls)
         with pytest.raises(AIResponseError) as error:
-            asyncio.run(service.generate_json([], max_tokens=4096))  # the report flow always sends the full budget
+            asyncio.run(service.generate_json([{"role": "user", "content": "Analyze shipment status"}], max_tokens=4096))  # the report flow always sends the full budget
         assert len(calls) == 1
         assert error.value.code in ("ai_response_truncated", "ai_invalid_json")
         assert error.value.details["ai_calls"] == 1

@@ -636,7 +636,7 @@ def test_no_usable_analysis_returns_no_data_instead_of_an_unavailable_report():
         row.pop("manifest_datetime")
     ai = PlannedAI([section("requested", ("shipment_status",))], alter_plan=lambda p: {**p, "cohort": [
         {"field": "manifest_datetime", "op": "between", "value": ["2026-10-01", "2026-10-10"]}]})
-    with pytest.raises(NoMatchingRecordsError, match="No data available"):
+    with pytest.raises(NoMatchingRecordsError, match="shipments were received"):
         generate(records=records, ai=ai, report_accuracy_strict=True)
     assert len(ai.calls) == 1  # No narrative or report is generated.
 

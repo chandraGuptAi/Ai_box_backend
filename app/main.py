@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -18,11 +18,13 @@ from app.api.report_routes import router as report_router
 from app.config import settings
 from app.errors import AppError, error_payload, request_id_var
 from app.middleware import RequestIdMiddleware, RequestSizeLimitMiddleware
+from app.security.dependencies import privacy_request_context
 
 logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
 logger = logging.getLogger("ai_box")
 
 app = FastAPI(
+    dependencies=[Depends(privacy_request_context)],
     title=settings.app_name,
     version=settings.app_version,
     description=(
@@ -123,6 +125,6 @@ app.include_router(prompt_router)
 from app.api.canonical_report_routes import router as canonical_report_router
 app.include_router(canonical_report_router)
 
-# WhatsApp escalation routes/storage are isolated from the existing AI Box modules.
-from app.escalation_analyst.application import install as install_escalation_analyst
-install_escalation_analyst(app)
+# External service routes are registered in the central API gateway.
+from app.api_gateway import install as install_api_gateway
+install_api_gateway(app)
