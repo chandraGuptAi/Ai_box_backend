@@ -474,3 +474,55 @@ larger presentation-scale labels. Long evidence tables continue across slides.
 Text and tables remain editable in PPTX; charts are embedded images. Full source
 summary, metric notes and the AI disclaimer remain available in slide notes.
 No additional AI calls or external document-preview service are required.
+## Admin audit trail API
+
+`GET /api/admin/audit/reports` returns the report generation audit trail: one row per report request,
+with the seller, prompt, outcome, error, shipment counts and timing. It includes every seller's prompts and
+company names, so it is an **admin-only** endpoint:
+
+- Header `X-Audit-Key: <AI_BOX_AUDIT_API_KEY>` is required. The seller login (`X-User-Id`) does not grant access.
+- With `AI_BOX_AUDIT_API_KEY` empty the endpoint is disabled (503). Wrong or missing key: 401.
+- Call it from an internal admin panel or a server-side proxy; never ship the key in a seller-facing app.
+
+| Query parameter | Default | Description |
+|---|---|---|
+| `from_date` | today (IST) | First day, `YYYY-MM-DD`, India time |
+| `to_date` | `from_date` | Last day, inclusive. At most 93 days per request |
+| `user_id` | – | Only this seller |
+| `outcome` | – | `generated` or `failed` |
+| `error_code` | – | e.g. `no_matching_records`, `clarification_required` |
+| `search` | – | Text in the prompt, company name, user ID or customer ID |
+| `page`, `page_size` | 1, 50 | Paging; `page_size` at most 500 |
+| `format` | `json` | `csv` downloads every matching row as a file (no paging) |
+
+JSON response:
+
+```json
+{
+  "filters": {"from_date": "2026-10-23", "to_date": "2026-10-26", "user_id": null, "outcome": null,
+              "error_code": null, "search": null, "timezone": "Asia/Kolkata"},
+  "summary": {
+    "requests": 67, "generated": 58, "failed": 9, "success_rate": 86.6, "unique_users": 41,
+    "median_duration_ms": 8169, "max_duration_ms": 38200,
+    "errors": {"no_matching_records": 4, "clarification_required": 3, "invalid_prompt": 2},
+    "by_day": [{"date": "2026-10-23", "requests": 34, "generated": 31, "failed": 3, "...": "same fields as summary"}],
+    "top_users": [{"user_id": "198150", "company_name": "…", "requests": 7, "generated": 6}]
+  },
+  "page": 1, "page_size": 50, "total": 67, "total_pages": 2,
+  "items": [{
+    "request_id": "…", "report_id": "…", "date_ist": "2026-10-26", "time_ist": "11:12:04",
+    "started_at": "2026-10-26T05:42:04+00:00", "completed_at": "…",
+    "user_id": "198150", "customer_id": "198150", "company_name": "…",
+    "outcome": "failed", "error_code": "no_matching_records", "prompt": "…",
+    "report_type": "shipment", "source": "shipment_api",
+    "records_analyzed": null, "shipments_matched": null, "duration_ms": 4512,
+    "from_date": "2026-09-27", "to_date": "2026-10-26", "status_filter": "All Statuses",
+    "is_follow_up": false, "previous_report_id": null, "ai_calls": null
+  }]
+}
+```
+
+`items` are newest first; `summary` always covers every matching row, not only the current page.
+`records_analyzed` is the number of shipments in the report, `shipments_matched` the number the shipment
+API returned for the selected filters. Data comes from `output/report_generation_audit.jsonl` (and its rotated
+copies), which starts on 2026-10-22 12:52 IST.
