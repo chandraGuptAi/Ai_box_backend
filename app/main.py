@@ -122,6 +122,8 @@ app.include_router(skill_router)
 app.include_router(prompt_router)
 from app.api.canonical_report_routes import router as canonical_report_router
 app.include_router(canonical_report_router)
+from app.api.audit_routes import router as audit_router
+app.include_router(audit_router)
 
 # WhatsApp escalation routes/storage are isolated from the existing AI Box modules.
 from app.escalation_analyst.application import install as install_escalation_analyst

@@ -112,6 +112,8 @@ class Settings:
     # Local development only: the user ID for AI Box requests that send no X-User-Id.
     # Empty (default) rejects such requests, so reports never fall into a shared account.
     dev_user_id: str = ""
+    # Admin key for GET /api/admin/audit/*; empty (default) disables the audit API.
+    audit_api_key: str = ""
     # Stop when the supplied shipments are not the complete, in-scope set the source matched.
     require_complete_source: bool = True
     # Audit-only by default: numerical accuracy failures are logged but do not block delivery.
@@ -181,6 +183,7 @@ class Settings:
             deepseek_input_cost_per_million=_float("DEEPSEEK_INPUT_COST_PER_MILLION", 0) if _str("DEEPSEEK_INPUT_COST_PER_MILLION") else None,
             deepseek_output_cost_per_million=_float("DEEPSEEK_OUTPUT_COST_PER_MILLION", 0) if _str("DEEPSEEK_OUTPUT_COST_PER_MILLION") else None,
             dev_user_id=_str("AI_BOX_DEV_USER_ID"),
+            audit_api_key=_str("AI_BOX_AUDIT_API_KEY"),
             require_complete_source=_bool("REPORT_REQUIRE_COMPLETE_SOURCE", True),
             report_accuracy_strict=_bool("REPORT_ACCURACY_STRICT", False),
             report_deadline_seconds=_float("REPORT_DEADLINE_SECONDS", 170.0, minimum=5.0),
