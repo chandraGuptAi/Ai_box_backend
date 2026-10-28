@@ -676,6 +676,13 @@ async def plan_request_before_fetch(ai, request, account_scope):
         "supported_metrics": {name: asdict(spec) for name, spec in adapter.measures.items()},
         "filter_operators": ["eq", "ne", "in", "not_in", "gt", "gte", "lt", "lte", "between"],
         "schema": ReportExecutionProposal.model_json_schema(), "skill_instructions": skills}
+    from app.report_period import effective_period_var
+    period = effective_period_var.get()
+    if period and period.source in {"prompt", "previous_report"}:
+        # Resolved deterministically before this call; the AI must not re-derive (or shift) it.
+        payload["resolved_period"] = {"from": period.start.isoformat(), "to": period.end.isoformat(),
+            "label": period.label, "instruction": "This requested period is already applied as source_scope. "
+            "Do not add date filters for it; add date filters only for a narrower sub-period the request names."}
     if request.previous_report:
         payload["follow_up_context"] = {"report_id": request.previous_report.get("report_id"),
             "section_ids": [s.get("id") for s in (request.previous_report.get("structured_report") or {}).get("sections", [])]}

@@ -202,6 +202,40 @@ an Angular status label (`All Statuses`, `Pickup Scheduled`, `Not Picked`, `In-T
 `Delivered`, `Undelivered`, `RTO Intransit`, `RTO Delivered`, `Cancelled`, `Lost`). `date_field` must be listed in
 `SHIPMENT_API_DATE_FIELDS`. Ranges are limited to `SHIPMENT_API_MAX_RANGE_DAYS` and cannot end in the future.
 
+### Report period (prompt dates, precedence, six-month limit)
+
+The period is resolved once, before any AI call or shipment query (`app/report_period.py`), and every later
+step reads it: the upstream `fromDate`/`toDate`, metrics, charts, the AI inputs, DOCX/PDF/PPTX exports, saved
+reports, follow-ups and the audit trail.
+
+- Prompt periods are parsed deterministically (no AI call) in English, Hindi and Hinglish: "last/past/previous N
+  days|weeks|months|years", "for 30 days", "30 din ki report", "पिछले 30 दिनों", "pichle 2 mahine", "last month"
+  (previous calendar month), "this month", "last week", "last year", month names ("September 2026"), explicit
+  ranges ("from 1 Aug to 30 Sep 2026", "between ... and ...", "1 अगस्त से 30 सितंबर 2026 तक") and single dates
+  ("on 5 Oct 2026"), against today in `filters.timezone`. "N months" ends today and starts on the same day of the
+  month N months earlier (e.g. 28 Apr-27 Oct). Phrases about shipments ("delivered within 3 days", "older than
+  30 days") are not periods. Two different periods ("compare this month with last month") return 422
+  `clarification_required` (`details.reason=multiple_periods`); impossible or reversed dates return 422
+  `invalid_date_range`. Wording the rules do not cover is left to the existing planner, whose date filters must
+  stay inside the resolved range.
+- Precedence: (1) dates the seller chose win: `filters.date_source="user"`, or explicit `from_date`/`to_date`
+  without `range_days`. A prompt period inside them is analysed as a sub-period; a different one returns 422
+  `clarification_required` (`details.reason=date_range_conflict`), never a silent report for the other period.
+  (2) Otherwise the prompt period. A preset (`range_days`/`date_range`, which the UI sends as its default
+  "Last 7 days") or `date_source="default"` never hides it. (3) Otherwise a follow-up keeps the prompt period of
+  `previous_report`. (4) Otherwise the filters as sent. `filters.date_source` is optional and backward compatible;
+  without it the backend cannot tell a chosen preset from the UI default, so presets yield to prompt periods.
+- Maximum six calendar months, inclusive of both days: [start, end] is valid when start >= the same day-of-month
+  six months before (end + 1 day); a day the target month lacks moves to the next month's 1st. 1 Apr-30 Sep passes;
+  31 Mar-30 Sep and 1 Apr-1 Oct fail. Old dates are allowed. Longer ranges (prompt, filters or a follow-up's
+  inherited period) are never truncated: HTTP 422 `report_date_range_exceeded`, message "You can generate reports
+  for up to 6 months at a time. Please select a shorter date range.", `details.max_months=6`,
+  `details.suggested_range="last_6_months"`, `details.requested`. This check runs before the shipment API is called.
+- Response: `structured_report.scope.date_range` = `{source: prompt|selected_filters|previous_report, label,
+  start_date, end_date, timezone, date_field, max_months, validation, selected_filters?, prompt_period?}`, next to
+  the existing `selected_period`, `requested_period` (whose `basis` is now the same `source`) and `period_label`.
+  It is inside the signed report, so it is also returned by `GET /api/reports/{report_id}` and saved reports.
+
 Upstream calls, all with identical filters and the caller's token:
 
 1. `page=1, perPage=SHIPMENT_API_COUNT_PAGE_SIZE` → `data.totalRecords` (never `data.total` or the status counters).
@@ -425,8 +459,13 @@ Protection combines:
 - A final residual scan before dispatch. Detector exceptions/unavailability,
   unsupported message types, excessive depth/size, opaque encoded input and
   ambiguous unsupported-language text block the request with HTTP 422,
-  `error.code=ai_privacy_blocked`. Hindi uses an explicit reporting vocabulary;
-  unknown Devanagari words block rather than relying on unreliable name detection.
+  `error.code=ai_privacy_blocked` and a generic message ("We couldn't prepare your report from this
+  request. Please rephrase it and try again."); the internal reason is logged and audited only. Hindi uses an
+  explicit reporting vocabulary; unknown Devanagari words are masked (never sent) rather than relying on
+  unreliable name detection. Spans made only of the backend's registered report vocabulary (field and metric
+  labels such as "Delivery Rate" or "Manifest Date", statuses, JSON-schema keywords) are not treated as names;
+  when masking a span makes the name model tag its neighbour, masking repeats (at most 3 rounds) before the
+  unchanged final residual scan.
 
 Original business data and local document branding are retained locally; only a
 sanitized copy is sent to the provider. Analytical numbers, registered operation
@@ -435,7 +474,9 @@ with a known private identifier. Redaction is conservative and can remove contex
 there is no restoration of private values into provider messages.
 
 Security events use logger `ai_box.security.privacy` and contain only a generated
-privacy audit ID, action, fixed reason code and category counts. They do not
+privacy audit ID, action, fixed reason code, a fixed internal `detail` code (for example `residual_person`,
+`residual_identity`, `detector_error`), the fixed stage tag of the call (`report_plan`, `grounded_sections`)
+and category counts. They do not
 include prompts, matches, names, seller IDs, payload paths or exception bodies.
 Report activity records now retain operational metadata only. Previously written
 log files are not rewritten; apply your existing retention/access policy to them.

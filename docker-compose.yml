@@ -19,6 +19,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - default
+      - whatsapp-ai
     init: true
     security_opt:
       - no-new-privileges:true
@@ -31,6 +34,12 @@ services:
   postgres:
     image: postgres:17
     restart: unless-stopped
+    # The WhatsApp escalation service (whatsapp-ai-network) uses this database as host ai-box-postgres-1.
+    networks:
+      - default
+      - whatsapp-ai
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5434}:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-ai_box}
       POSTGRES_USER: ${POSTGRES_USER:-ai_box}
@@ -48,6 +57,10 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+networks:
+  whatsapp-ai:
+    external: true
+    name: whatsapp-ai-network
 volumes:
   postgres_data:
     name: ai-box_postgres_data

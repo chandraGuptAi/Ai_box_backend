@@ -227,12 +227,19 @@ def test_privacy_context_is_isolated_between_concurrent_sellers():
     assert not privacy._identities.get()
 
 
-@pytest.mark.parametrize('text', ['राहुल शर्मा की shipment report बनाओ', '王小明 shipment report'])
-def test_uncertain_non_latin_names_are_blocked_instead_of_leaked(text):
+def test_unsupported_scripts_are_blocked_instead_of_leaked():
     service, calls = sdk_service()
     with pytest.raises(AIPrivacyError):
-        asyncio.run(service.generate_json(messages(text)))
+        asyncio.run(service.generate_json(messages('王小明 shipment report')))
     assert not calls
+
+
+@pytest.mark.parametrize('text', ['राहुल शर्मा की shipment report बनाओ', 'मुख्य दैनिक विभाजन: राहुल शर्मा'])
+def test_unknown_devanagari_words_are_masked_instead_of_leaked(text):
+    service, calls = sdk_service()
+    asyncio.run(service.generate_json(messages(text)))
+    sent = calls[0]['messages'][0]['content']
+    assert 'राहुल' not in sent and 'शर्मा' not in sent and privacy.MASK in sent
 
 
 @pytest.mark.parametrize('text', ['शिपमेंट रिपोर्ट बनाओ', 'पिछले 30 दिनों की डिलीवरी रिपोर्ट दिखाओ',
@@ -288,3 +295,27 @@ def test_report_narrative_privacy_failure_cannot_become_a_deterministic_fallback
     with pytest.raises(AIPrivacyError):
         asyncio.run(ReportService(ai, config=replace(settings, report_ai_planner=True,
             deterministic_fallback=True)).generate_report(request()))
+
+
+def test_report_vocabulary_is_not_masked_as_a_person_but_names_still_are():
+    text = json.dumps({'title': 'Delivery Rate vs RTO Rate', 'field': 'Manifest Date', 'format': 'ISO YYYY-MM-DD',
+                       'note': 'Rahul Sharma asked; Aarav Deshmukh approved'})
+    sent = guard.protect(messages(text))[0]['content']
+    for kept in ('Delivery Rate vs RTO Rate', 'Manifest Date', 'ISO YYYY-MM-DD'):
+        assert kept in sent
+    assert 'Rahul Sharma' not in sent and 'Aarav Deshmukh' not in sent
+
+
+def test_a_context_shift_after_masking_is_masked_again_not_blocked(monkeypatch):
+    # The reported failure: masking "Delivery Rate" made the model tag "RTO Rate" in the re-scan.
+    class Shifting:
+        def __call__(self, text):
+            spans = []
+            for candidate in ('Alpha Person', 'Beta Person'):
+                at = text.find(candidate)
+                if at >= 0 and (candidate == 'Alpha Person' or privacy.MASK in text):
+                    spans.append(SimpleNamespace(start_char=at, end_char=at + len(candidate), text=candidate, label_='PERSON'))
+            return SimpleNamespace(ents=spans)
+    monkeypatch.setattr(privacy, '_name_detector', lambda: Shifting())
+    sent = guard.protect(messages('Alpha Person vs Beta Person'))[0]['content']
+    assert sent == f'{privacy.MASK} vs {privacy.MASK}'

@@ -385,13 +385,19 @@ def test_prompt_status_conflict_asks_for_clarification(run, ai):
     ({**FILTERS, "status": "Teleported"}, "status"),
     ({**FILTERS, "date_field": "order_date"}, "date_field"),
     ({**FILTERS, "to_date": (date.today() + timedelta(days=2)).isoformat()}, "to_date"),
-    ({**FILTERS, "from_date": (TO_DAY - timedelta(days=400)).isoformat()}, "from_date"),
     ({**FILTERS, "timezone": "Mars/Base"}, "timezone"),
 ])
 def test_unsupported_filters_are_rejected_before_any_call(run, filters, field):
     upstream = Upstream(rows(3))
     body = error(run(upstream, {"filters": filters}), 422, "unsupported_filter")
     assert body["details"]["field"] == field and upstream.requests == []
+
+
+def test_ranges_over_six_months_are_rejected_before_any_call(run):
+    upstream = Upstream(rows(3))
+    body = error(run(upstream, {"filters": {**FILTERS, "from_date": (TO_DAY - timedelta(days=400)).isoformat()}}),
+                 422, "report_date_range_exceeded")
+    assert body["details"]["max_months"] == 6 and upstream.requests == []
 
 
 def test_request_contract_is_unambiguous(run):

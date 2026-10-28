@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import logging
 from logging.handlers import RotatingFileHandler
 import json
@@ -13,6 +15,7 @@ import secrets
 import time
 import threading
 from collections import Counter, OrderedDict
+from contextvars import ContextVar
 from typing import Any
 from fastapi import HTTPException
 from datetime import datetime, timedelta, timezone
@@ -52,6 +55,7 @@ from app.prompts.report_intent import (detect_intent, scope_analysis, selected_t
                                       report_charts, deterministic_narrative, shape_narrative, relevant_metrics)
 from app.prompts.registry import get_report_definition, list_report_definitions
 from app.services.deepseek_service import DeepSeekService
+from app.services import audit_db
 from app.services.report_activity import write_report_activity
 from app.services.shipment_insights import build_insights, headline_cards, insights_narrative
 from app.services.report_evidence import (NarrativeRepairError, repair_unsupported_narrative,
@@ -86,9 +90,35 @@ def _log_validation_event(event):
         handler.handle(logging.LogRecord(audit.name, logging.WARNING, __file__, 0, message, (), None))
     except OSError:
         logger.warning("Validation audit file is unavailable; diagnostics remain in console logs.")
+    audit_db.submit("validation", event)
 
 
 _IST = timezone(timedelta(hours=5, minutes=30))
+
+# Request-local processing stage (date_resolution, planning, source_fetch, analysis, narrative, completed),
+# recorded in the report activity audit when generation stops.
+report_stage_var: ContextVar[str | None] = ContextVar("report_stage", default=None)
+
+
+def seller_reference(user_id: str | None) -> str | None:
+    """A keyed, non-reversible seller pseudonym for the audit trail (never the seller ID itself)."""
+    if not user_id:
+        return None
+    from app.analysis.accuracy import _SIGNING_KEY
+    return "s_" + hmac.new(_SIGNING_KEY, b"seller:" + str(user_id).encode(), hashlib.sha256).hexdigest()[:24]
+
+
+def _period_basis() -> str:
+    from app.report_period import effective_period_var
+    period = effective_period_var.get()
+    return period.source if period else "selected_filters"
+
+
+def _date_range_scope() -> dict[str, Any]:
+    """scope.date_range: the effective period, its source and the six-month check (see report_period)."""
+    from app.report_period import effective_period_var
+    period = effective_period_var.get()
+    return {"date_range": period.to_dict()} if period else {}
 
 
 def _filename_part(value: Any, fallback: str) -> str:
@@ -129,6 +159,7 @@ def write_coverage_audit(record: dict[str, Any]) -> None:
     except OSError:
         logger.warning("Coverage audit file is unavailable; report_id=%s outcome=%s",
                        record.get("report_id"), record.get("outcome"))
+    audit_db.submit("coverage", record)
 
 
 def _coverage_record(request, user_id, outcome, *, report_id=None, completeness=None, notes=(), details=None):
@@ -506,12 +537,21 @@ class ReportService:
         outcome, error_code = "cancelled", None
         error_details = {}
         from app.security.privacy import privacy_context
+        from app.report_period import effective_period_var, resolve_report_period
         privacy = privacy_context(request.model_dump(mode="json"), {"seller_id": user_id,
                                   "access_token": shipment_credential})
+        stage_token = report_stage_var.set("date_resolution")
+        period_token = effective_period_var.set(None)
+        period, date_check = None, "not_applicable"
         try:
             with privacy:
+                # The period is fixed (and limited to six months) before any AI call or shipment query.
+                request, period = resolve_report_period(request, default_date_field=self._settings.shipment_api_date_fields[0])
+                effective_period_var.set(period)
+                date_check = "within_limit" if period else "not_applicable"
                 report = await self._generate_report(request, shipment_credential=shipment_credential, user_id=user_id)
             outcome = "generated"
+            report_stage_var.set("completed")
             return report
         except Exception as exc:
             outcome = "failed"
@@ -521,6 +561,16 @@ class ReportService:
                 # Counts and fixed reason codes only; never raw records or prompts.
                 error_details = {key: exc.details[key] for key in ("reason", "source_records", "pincode_records")
                                  if key in exc.details}
+            if report_stage_var.get() == "date_resolution":
+                reason = exc.details.get("reason") if isinstance(getattr(exc, "details", None), dict) else None
+                date_check = {"report_date_range_exceeded": "exceeded", "invalid_date_range": "invalid"}.get(
+                    error_code, {"date_range_conflict": "conflict", "multiple_periods": "ambiguous"}.get(reason, date_check))
+            # Fixed internal codes (e.g. the privacy check's residual_person) are audited, never returned.
+            internal_code = getattr(exc, "internal_code", None)
+            if internal_code:
+                error_details["internal_error_code"] = internal_code
+            logger.warning("Report generation failed: request_id=%s stage=%s code=%s internal_code=%s",
+                           request_id_var.get(), report_stage_var.get(), error_code, internal_code or "-")
             raise
         finally:
             try:
@@ -528,7 +578,13 @@ class ReportService:
                 write_report_activity({
                     "event": "report_generation", "request_id": request_id_var.get(),
                     "report_id": report.report_id if report else report_id_var.get(),
+                    "seller_id": user_id, "user_id": user_id,
+                    "customer_id": report.customer_id if report else request.customer_id,
+                    "company_name": request.company_name, "prompt": request.prompt,
                     "report_type": request.report_type, "source": request.source,
+                    "filters": request.filters.model_dump(mode="json") if request.filters else None,
+                    "date_range": request.date_range,
+                    "generation": report.generation if report else None,
                     "started_at": started_at.isoformat(), "completed_at": completed_at.isoformat(),
                     "started_at_ist": started_at.astimezone(_IST).isoformat(),
                     "duration_ms": round((time.monotonic() - started) * 1000),
@@ -539,8 +595,16 @@ class ReportService:
                     "previous_report_id": (request.previous_report or {}).get("report_id"),
                     "records_analyzed": report.records_analyzed if report else None,
                     "ai_calls": (report.generation or {}).get("ai_calls") if report else None,
+                    "seller_ref": seller_reference(user_id),
+                    "processing_stage": report_stage_var.get(),
+                    "date_range_source": period.source if period else None,
+                    "resolved_start_date": period.start.isoformat() if period else None,
+                    "resolved_end_date": period.end.isoformat() if period else None,
+                    "date_validation_result": date_check,
                 })
             finally:
+                effective_period_var.reset(period_token)
+                report_stage_var.reset(stage_token)
                 report_id_var.reset(report_token)
                 request_id_var.reset(request_token)
 
@@ -574,6 +638,7 @@ class ReportService:
             if request.source == "shipment_api":
                 delegated_credential(shipment_credential)
                 build_query(request.filters, self._settings)
+            report_stage_var.set("planning")
             approved_plan = await plan_request_before_fetch(self._ai, request,
                 digest(f"{user_id or 'payload'}:{digest(shipment_credential or '')}")[:20])
 
@@ -609,6 +674,7 @@ class ReportService:
             if request.source == "shipment_api":
                 if approved_plan is not None:
                     request, approved_plan, upstream_analysis_filters, authorized_source_scope = self._push_source_dates(request, approved_plan)
+                report_stage_var.set("source_fetch")
                 request, source, selected = await self._fetch_source(request, shipment_credential)
             elif definition.report_type == "shipment":
                 selected = selected_filters(request.filters, request.data)
@@ -630,6 +696,7 @@ class ReportService:
             audit.finish(block=False)
             raise
 
+        report_stage_var.set("analysis")
         snapshot = None
         if definition.report_type == "shipment":
             snapshot = DatasetSnapshot.capture(request.data, source, selected,
@@ -991,8 +1058,9 @@ class ReportService:
                     display_scope["observed_data_period"] = display_scope.get("supplied_data_period")
                     display_scope["display_period"] = period
                     display_scope["requested_period"] = {"from": period["from_date"], "to": period["to_date"],
-                        "date_field": period["date_field"], "timezone": period["timezone"], "basis": "selected_filters"}
+                        "date_field": period["date_field"], "timezone": period["timezone"], "basis": _period_basis()}
                     display_scope["period_label"] = period_label(period)
+                    display_scope.update(_date_range_scope())
                 if report.insights:
                     report.insights["scope"]["from_date"] = period["from_date"]
                     report.insights["scope"]["to_date"] = period["to_date"]
@@ -1133,6 +1201,7 @@ class ReportService:
                          "selected_filters": selected.to_dict() if selected else None})
         texts = {d.requirement.id: [d.text] for d in datasets}
         narrative_source = "deterministic_fallback"
+        report_stage_var.set("narrative")
         try:
             raw = await self._ai.generate_json(narrative_messages(request.prompt, plan, datasets, scope),
                                                 max_tokens=self._settings.deepseek_max_output_tokens)
@@ -1177,7 +1246,8 @@ class ReportService:
                 scope = {**scope, "display_period": period, "period_label": period_label(period),
                     "observed_data_period": scope.get("supplied_data_period"),
                     "requested_period": {"from": period["from_date"], "to": period["to_date"], "date_field": period["date_field"],
-                                         "timezone": period["timezone"], "basis": "selected_filters"}}
+                                         "timezone": period["timezone"], "basis": _period_basis()},
+                    **_date_range_scope()}
         summary = "Requested analyses: " + "; ".join(section_title(d.requirement) for d in datasets) + "."
         report_id = report_id_var.get() or uuid.uuid4().hex
         generated_at = datetime.now(timezone.utc)

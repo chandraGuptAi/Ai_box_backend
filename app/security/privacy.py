@@ -26,6 +26,7 @@ _audit_id = ContextVar('ai_privacy_audit_id', default=None)
 _lock = threading.Lock()
 MAX_TEXT = 250_000
 MAX_DEPTH = 32
+_MASK_ROUNDS = 3
 
 
 def _key(value):
@@ -75,7 +76,7 @@ _PUBLIC_TERMS = frozenset(word.casefold() for word in (
     'Delivered', 'Undelivered', 'In Transit', 'in_transit', 'Pending', 'Cancelled',
     'Shipment', 'shipments', 'English', 'Hindi', 'Hinglish', 'Devanagari', 'NEVER'))
 # Statistical name detection is weak for Devanagari. Permit a fixed reporting
-# vocabulary; unknown words are ambiguous and block instead of being sent raw.
+# vocabulary; unknown words are ambiguous and are masked instead of being sent raw.
 _HINDI_REPORT_WORDS = frozenset(('शिपमेंट शिपमेंट्स रिपोर्ट रिपोर्ट्स बनाओ बनाएं बनाइए बनाना करो करें '
     'दिखाओ दिखाएं दिखाइए दिखाना दो दें बताओ बताएं विश्लेषण जानकारी विवरण सारांश चार्ट ग्राफ '
     'तालिका टेबल डिलीवरी डिलीवर डिलीवर्ड रिटर्न आरटीओ सीओडी पिन पिनकोड पिनकोडों '
@@ -85,7 +86,56 @@ _HINDI_REPORT_WORDS = frozenset(('शिपमेंट शिपमेंट्
     'हमारे की का के को में से तक पर और या साथ बिना लिए लिये नहीं हटाओ जोड़ो जोड़ें '
     'इस उस एक हैं है हुए हुआ हुई सबसे ज्यादा कम अधिक अनुसार आधार तैयार कर कृपया '
     'शहर शहरों राज्य राज्यों दिल्ली मुंबई बेंगलुरु चेन्नई हैदराबाद पुणे अहमदाबाद '
-    'भुगतान प्रीपेड कैश डिलीवरी ट्रांजिट इनसाइट इनसाइट्स').split())
+    'भुगतान प्रीपेड कैश डिलीवरी ट्रांजिट इनसाइट इनसाइट्स '
+    # Period, comparison and section-title words, including those the planner writes in Hindi titles.
+    'दैनिक साप्ताहिक मासिक वार्षिक विभाजन तुलनात्मक अवलोकन रुझान प्रवृत्ति गिनती हिस्सा अनुपात '
+    'समय अवधि तारीख तिथि दिनांक महीनों महीनो माह हफ्ते हफ़्ते हफ्ता हफ़्ता हफ्तों हफ़्तों सप्ताहों सालों '
+    'वर्ष वर्षों आखिरी आख़िरी अंतिम पिछला बीते गत दौरान बनाम अंतर बदलाव वृद्धि गिरावट शीर्ष टॉप '
+    'कूरियरों राज्यवार शहरवार कूरियरवार स्थितिवार मोड प्रकार श्रेणी कारण कारणों सुझाव सिफारिश सिफारिशें '
+    'निष्कर्ष परिणाम आंकड़े आँकड़े डेटा डाटा पेंडिंग कैंसल वापसी वापस पहुंचे पहुँचे रास्ते ट्रांज़िट '
+    'डिलीवरीज़ डिलीवर्ड ऑर्डरों शिपमेंटों वाले वाली वाला गया गई गए था थी थे प्रति दरें दो तीन चार पांच पाँच '
+    'छह छः सात आठ नौ दस ग्यारह बारह तीस साठ नब्बे').split())
+_HINDI_REPORT_WORDS = frozenset(unicodedata.normalize('NFKC', word) for word in _HINDI_REPORT_WORDS)
+# Words of the backend's own report vocabulary (schema labels, metric names, statuses, JSON schema
+# keywords). The local name model tags phrases such as "Delivery Rate" or "Manifest Date" as people;
+# a span made only of these words is not a person. Any other word in the span keeps it detected.
+_REPORT_VOCABULARY_WORDS = (
+    'rate rates count counts share trend trends daily weekly monthly yearly vs versus comparison compare compared '
+    'breakdown summary total totals average avg median top bottom highest lowest order orders shipment shipments '
+    'delivered delivery deliveries transit rto status statuses date dates day days week weeks month months year years '
+    'today performance overview analysis insight insights report reports section sections metric metrics id ids kpi kpis '
+    'volume pending cancelled canceled cancellation cancellations returned return returns exception exceptions ndr '
+    'lost undelivered picked pickup pickups scheduled not manifest manifested courier couriers carrier payment mode '
+    'modes cod prepaid state states city cities zone zones pincode pincodes pin weight charge charges shipping amount '
+    'value values revenue cost freight time timeline stage stages reason reasons distribution mix ratio percent '
+    'percentage percentages chart charts table tables graph bar line pie doughnut area histogram scatter limitation '
+    'limitations note notes narrative recommendation recommendations action actions requested request requirement '
+    'requirements kind schema type types string integer number boolean null array object gte gt lte lt eq ne between '
+    'min max ranking rank data missing required field fields available unavailable consignee buyer buyers first '
+    'last previous current period range selected scope source verified collectable invoice weekday out for of and '
+    'or by the in to per vs ai box iso yyyy mm dd fy quarter quarterly trip attempt attempts remarks remark '
+    'title description properties enum items default ref defs anyof allof oneof format').split()
+
+
+@lru_cache(maxsize=1)
+def _report_vocabulary():
+    words = set(_REPORT_VOCABULARY_WORDS) | {w for term in _PUBLIC_TERMS for w in re.findall(r'[^\W\d_]+', term)}
+    try:
+        from app.charts.fields import get_adapter
+        from app.analysis.vocabulary import get_vocabulary
+        adapter = get_adapter('shipment')
+        texts = [*adapter.fields, *(f.label for f in adapter.fields.values()), *adapter.measures,
+                 *(m.label for m in adapter.measures.values()), *get_vocabulary('shipment').status_values]
+    except Exception:  # The fixed list above still applies; detection is never relaxed further.
+        texts = []
+    for text in texts:
+        words.update(re.findall(r'[^\W\d_]+', str(text).casefold()))
+    return frozenset(words)
+
+
+def _report_vocabulary_only(text):
+    words = re.findall(r'[^\W\d_]+', text.casefold())
+    return bool(words) and all(word in _report_vocabulary() for word in words)
 
 
 @lru_cache(maxsize=1)
@@ -109,7 +159,8 @@ class _LocalNames:
         spans = sorted((entity.start_char, entity.end_char) for model in models
                        for entity in model(text).ents if (entity.label_ in {'PERSON', 'PER'} or
                            (entity.label_ == 'ORG' and len(entity.text.split()) > 1))
-                       and entity.text.casefold().strip() not in _PUBLIC_TERMS)
+                       and entity.text.casefold().strip() not in _PUBLIC_TERMS
+                       and not _report_vocabulary_only(entity.text))
         merged = []
         for start, end in spans:
             if merged and start < merged[-1][1]:
@@ -169,9 +220,9 @@ def privacy_context(*values):
             _collect(value, found)
         token = _identities.set(frozenset(found))
         audit_token = _audit_id.set(_audit_id.get() or uuid.uuid4().hex)
-    except Exception:
-        _event('blocked', 'context_failed', {})
-        raise AIPrivacyError('The privacy check could not safely inspect this request.') from None
+    except Exception as exc:
+        _event('blocked', 'context_failed', {}, failure_code(exc))
+        raise _blocked(failure_code(exc)) from None
     try:
         yield
     finally:
@@ -185,16 +236,52 @@ def register_source_identities(value):
         found = set(_identities.get())
         _collect(value, found)
         _identities.set(frozenset(found))
-    except Exception:
-        _event('blocked', 'context_failed', {})
-        raise AIPrivacyError('The privacy check could not safely inspect the source data.') from None
+    except Exception as exc:
+        _event('blocked', 'context_failed', {}, failure_code(exc))
+        raise _blocked(failure_code(exc)) from None
 
 
-def _event(action, reason, counts):
+PUBLIC_MESSAGE = "We couldn't prepare your report from this request. Please rephrase it and try again."
+# Fixed internal failure codes (from this module's own ValueError texts); safe to log, never shown to users.
+_FAILURE_CODES = {
+    'Invalid messages': 'invalid_messages', 'Privacy input limit': 'input_limit',
+    'Unsupported model input': 'unsupported_input', 'Residual sensitive content': 'residual_pattern',
+    'Residual identity': 'residual_identity', 'Residual person': 'residual_person',
+    'Privacy scan limit': 'scan_limit', 'Uninspectable encoded input': 'uninspectable_input',
+    'Redacted key collision': 'key_collision', 'Uncertain non-Latin identity': 'uncertain_devanagari_word',
+    'Unsupported privacy language': 'unsupported_language', 'Privacy context nesting limit': 'nesting_limit',
+}
+
+
+def failure_code(exc):
+    if type(exc) is ValueError and str(exc) in _FAILURE_CODES:
+        return _FAILURE_CODES[str(exc)]
+    return 'detector_error' if isinstance(exc, (RuntimeError, ImportError, OSError)) else 'internal_error'
+
+
+def _blocked(code, stage=None):
+    error = AIPrivacyError(PUBLIC_MESSAGE)
+    error.internal_code = code  # For logs and the audit trail only; never part of the API response.
+    error.stage = stage
+    return error
+
+
+def _event(action, reason, counts, detail=None, stage=None):
     # Never log content, exception messages, field paths, IDs, hashes or matched values.
-    logger.warning('%s', json.dumps({'event': 'ai_privacy', 'action': action,
-                                    'audit_id': _audit_id.get() or uuid.uuid4().hex,
-                                    'reason': reason, 'categories': dict(+Counter(counts))}, sort_keys=True))
+    event = {'event': 'ai_privacy', 'action': action, 'audit_id': _audit_id.get() or uuid.uuid4().hex,
+             'reason': reason, 'categories': dict(+Counter(counts))}
+    if detail:
+        event['detail'] = detail
+    if stage:
+        event['stage'] = stage
+    logger.warning('%s', json.dumps(event, sort_keys=True))
+
+
+def _stage(messages):
+    # The fixed backend tag that opens each system prompt, e.g. "[report_plan]"; never message content.
+    first = messages[0] if isinstance(messages, list) and messages and isinstance(messages[0], dict) else {}
+    match = re.match(r'\[([a-z_]{1,40})\]', first.get('content') or '') if first.get('role') == 'system' else None
+    return match[1] if match else None
 
 
 def _sensitive_key(key, owner):
@@ -263,10 +350,11 @@ class PrivacyGuard:
                            for fragment in _text_fragments(text) if fragment.strip() and fragment != MASK
                            for entity in detector(fragment).ents):
                         raise ValueError('Residual person')
-        except Exception:
-            _event('blocked', 'inspection_failed', counts)
-            raise AIPrivacyError('The request was blocked because its data could not be safely protected for AI processing.') from None
-        _event('sanitized' if +counts else 'allowed', 'checked', counts)
+        except Exception as exc:
+            code, stage = failure_code(exc), _stage(messages)
+            _event('blocked', 'inspection_failed', counts, code, stage)
+            raise _blocked(code, stage) from None
+        _event('sanitized' if +counts else 'allowed', 'checked', counts, stage=_stage(messages))
         return protected
 
     @staticmethod
@@ -326,18 +414,31 @@ class PrivacyGuard:
         for pattern in (_LABEL, _HINDI_LABEL):
             text, count = pattern.subn(MASK, text)
             counts['labelled_identity'] += count
-        for word in re.findall(r'[\u0900-\u097f]+', text):
-            word = ''.join(c for c in word if unicodedata.category(c)[0] in {'L', 'M'})
+        # Name detection is unreliable for Devanagari: every word outside the fixed reporting vocabulary is
+        # masked (never sent), so an unrecognised word cannot leak and cannot stop a valid report either.
+        def devanagari(match):
+            word = ''.join(c for c in match.group(0) if unicodedata.category(c)[0] in {'L', 'M'})
             if word and word not in _HINDI_REPORT_WORDS:
-                raise ValueError('Uncertain non-Latin identity')
+                counts['uncertain_devanagari_word'] += 1
+                return MASK
+            return match.group(0)
+        text = re.sub(r'[\u0900-\u097f]+', devanagari, text)
         if any(c.isalpha() and 'LATIN' not in unicodedata.name(c, '') and not '\u0900' <= c <= '\u097f' for c in text):
             raise ValueError('Unsupported privacy language')
         if names and text.strip():
-            entities = detector(text).ents
-            for entity in reversed(entities):
-                if entity.label_ in {'PERSON', 'PER'} and MASK not in entity.text:
+            # Masking one span changes the context of the rest, and the model can then tag a neighbour
+            # (e.g. "[REDACTED] vs RTO Rate"). Mask again until nothing person-like remains; text that is
+            # still unstable after a few rounds blocks. The final independent re-scan in protect() is unchanged.
+            for _ in range(_MASK_ROUNDS):
+                entities = [e for e in detector(text).ents if e.label_ in {'PERSON', 'PER'} and MASK not in e.text]
+                if not entities:
+                    break
+                for entity in reversed(entities):
                     text = text[:entity.start_char] + MASK + text[entity.end_char:]
                     counts['person'] += 1
+            else:
+                if any(e.label_ in {'PERSON', 'PER'} and MASK not in e.text for e in detector(text).ents):
+                    raise ValueError('Residual person')
         return text
 
 

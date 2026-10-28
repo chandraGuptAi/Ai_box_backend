@@ -124,6 +124,16 @@ class UnsupportedFilterError(InvalidReportDataError):
     code = "unsupported_filter"
 
 
+class InvalidDateRangeError(InvalidReportDataError):
+    """A date in the prompt or filters does not exist, or the range ends before it starts."""
+    code = "invalid_date_range"
+
+
+class ReportDateRangeExceededError(InvalidReportDataError):
+    """The requested period is longer than the maximum report range (six calendar months)."""
+    code = "report_date_range_exceeded"
+
+
 class SourceTooLargeError(InvalidReportDataError):
     """More records match than one report may fetch; the user must narrow the filters."""
     code = "source_too_large"

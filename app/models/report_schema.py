@@ -113,6 +113,11 @@ class ReportFilters(BaseModel):
                     "Applied locally after the complete seller source is fetched.",
     )
     timezone: str = Field(default="Asia/Kolkata", max_length=60, description="IANA zone of the selected calendar days.")
+    date_source: Literal["user", "default"] | None = Field(default=None, description=(
+        "Optional. 'user': the seller chose these dates, so they take priority over a period named in the prompt "
+        "(a different prompt period returns clarification_required). 'default': the UI filled them in, so a prompt "
+        "period replaces them. Omitted: explicit from/to dates count as the seller's choice; a preset "
+        "(range_days/date_range, e.g. the UI's default 'Last 7 days') is replaced by a prompt period."))
 
     @model_validator(mode="after")
     def _ordered(self) -> ReportFilters:

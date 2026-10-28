@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.services import report_service
+from app.services import audit_db, report_service
 from app.config import settings
 
 
@@ -35,3 +35,10 @@ def report_activity_audit(monkeypatch):
     records = []
     monkeypatch.setattr(report_service, "write_report_activity", records.append)
     return records
+
+
+@pytest.fixture(autouse=True)
+def audit_database_disabled(monkeypatch):
+    """No test writes to a real audit database unless it installs its own writer."""
+    monkeypatch.setattr(audit_db, "_writer", None)
+    monkeypatch.setattr(audit_db, "_configured", True)
