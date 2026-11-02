@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, Query
 from fastapi.responses import Response
+from pydantic import BaseModel, ConfigDict
 
 from app.api.auth import CurrentUser, get_current_user, get_optional_user, get_user_reports
 from app.config import settings
@@ -19,6 +20,7 @@ from app.errors import ReportDeadlineError
 from app.models.report_schema import (
     ErrorResponse,
     ReportDocument,
+    ReportFilters,
     ReportRequest,
     ReportResponse,
     ReportTypeInfo,
@@ -34,6 +36,7 @@ from app.services.deepseek_service import DeepSeekService
 from app.services.prompt_translator_service import PromptTranslatorService
 from app.services.prompt_validator_service import PromptValidatorService
 from app.services.report_service import DOCX_MEDIA_TYPE, PDF_MEDIA_TYPE, PPTX_MEDIA_TYPE, ReportService
+from app.services.shipment_source import build_query, delegated_credential
 from app.storage.user_reports import UserReports
 from fastapi import HTTPException
 
@@ -165,6 +168,40 @@ async def generate_report(
     response.headers["X-Report-Access-Token"] = service.store_report(report)
     response.headers["Cache-Control"] = "no-store"
     return report
+
+
+class SourceCountRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    filters: ReportFilters
+
+
+class SourceCountResponse(BaseModel):
+    exact_count: int
+    is_estimate: bool = False
+    filters: dict
+
+
+@router.post(
+    "/source-count",
+    response_model=SourceCountResponse,
+    summary="Exact number of shipments a report with these filters will read",
+    responses={401: {"model": ErrorResponse}, 502: {"model": ErrorResponse}, 503: {"model": ErrorResponse},
+               504: {"model": ErrorResponse}},
+)
+async def source_count(
+    request: SourceCountRequest,
+    response: Response,
+    service: ReportService = Depends(get_report_service),
+    user: CurrentUser | None = Depends(get_optional_user),
+    x_shipment_authorization: str | None = Header(default=None, alias="X-Shipment-Authorization"),
+) -> SourceCountResponse:
+    """Uses the same query and count call as report generation, so the pre-analysis number matches the report."""
+    if user is None:
+        raise HTTPException(status_code=401, detail="AI Box login is required: the X-User-Id header is missing.")
+    query = build_query(request.filters, service._settings)
+    total = await service._source.count(query, delegated_credential(x_shipment_authorization))
+    response.headers["Cache-Control"] = "no-store"
+    return SourceCountResponse(exact_count=total, filters=query.describe())
 
 
 @router.post(

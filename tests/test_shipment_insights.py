@@ -112,7 +112,7 @@ def test_api_returns_insights_and_falls_back_instead_of_502(client_with):
     assert "999999" not in response.text
     ins = report["insights"]
     assert ins["schema_version"] == "3.0" and ins["meta"]["fallback_used"] is True
-    assert report["generation"]["narrative_source"] == "deterministic_fallback" and report["generation"]["notice"]
+    assert report["generation"]["narrative_source"] == "deterministic_fallback" and report["generation"]["notice"] is None
     assert ins["title"] == "In transit shipments, 14 Aug 2026 – 13 Oct 2026"
     assert ins["kpis"]["spend"] == 12304.40
     assert not any("rate" in m["label"].lower() for m in report["key_metrics"])

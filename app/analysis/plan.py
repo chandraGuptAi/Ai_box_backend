@@ -94,9 +94,19 @@ class ExecutionFilter(BaseModel):
             raise ValueError("Unregistered filter field")
         numeric = adapter.fields[self.field].kind == "number"
         if numeric:
-            values = self.value if isinstance(self.value, list) else [self.value]
-            if self.op not in {"gt", "gte", "lt", "lte", "between"} or any(isinstance(v, bool) or not isinstance(v, (int, float)) or _number(v) is None for v in values):
+            # "5 kg", "₹500" or "1,000" mean numbers; "weight = 5" means exactly 5 (between 5 and 5).
+            values = [_numeric_text(v) for v in (self.value if isinstance(self.value, list) else [self.value])]
+            if any(v is None for v in values):
                 raise ValueError("Invalid numeric filter")
+            object.__setattr__(self, "value", values if isinstance(self.value, list) else values[0])
+            if self.op in {"eq", "in"} and len(values) == 1:
+                object.__setattr__(self, "op", "between")
+                object.__setattr__(self, "value", [values[0], values[0]])
+            elif self.op == "ne" and len(values) == 1:
+                object.__setattr__(self, "value", values[0])
+            if self.op not in {"gt", "gte", "lt", "lte", "between", "ne"}:
+                raise ValueError("Invalid numeric filter")
+            values = self.value if isinstance(self.value, list) else [self.value]
             if (self.op == "between" and (len(values) != 2 or values[0] > values[1])) or (self.op != "between" and isinstance(self.value, list)):
                 raise ValueError("Invalid numeric bounds")
         elif adapter.fields[self.field].kind == "date":
@@ -306,6 +316,8 @@ class AnalysisPlan:
     source: str = "rules"            # "rules" | "rules+ai"
     sections: tuple[ExecutionSection, ...] = ()
     intent: str = "shipment_analysis"
+    widen_status: bool = False       # the prompt names statuses outside the selected one: fetch all statuses
+    widen_dates: tuple[date, date] | None = None  # days the prompt names outside the selected dates
 
     @property
     def scoped(self) -> bool:
@@ -368,6 +380,20 @@ def _number(value: Any) -> float | None:
     if isinstance(value, (int, float)):
         return float(value) if value == value and abs(value) != float("inf") and value >= 0 else None
     return None
+
+
+def match_key(value: Any) -> str:
+    """Category comparison key: case, spaces, underscores and hyphens never decide a match."""
+    return re.sub(r"[\s_-]+", " ", str(value)).strip().casefold()
+
+
+def _numeric_text(value: Any) -> float | None:
+    """A non-negative number from a model value such as 5, "5", "5 kg", "₹1,500" or "2.5kg"."""
+    if isinstance(value, str):
+        match = re.fullmatch(r"\s*(?:₹|rs\.?|inr)?\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*(?:kgs?|kilograms?|g|grams?|rs\.?|rupees?|inr|days?)?\s*",
+                             value, re.I)
+        value = float(match[1].replace(",", "")) if match else None
+    return _number(value)
 
 
 def validate_plan(plan: AnalysisPlan, adapter: DatasetAdapter, vocab: PlanVocabulary,

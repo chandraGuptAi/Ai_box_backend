@@ -1,5 +1,9 @@
 """Read-only access to the report generation audit trail for the admin audit API.
 
+Primary source: PostgreSQL audit.report_generation_audit / audit.report_coverage_audit (raw_event), see
+audit_db. Set AI_BOX_AUDIT_READ_SOURCE=jsonl to read the files instead; the files are also used when the
+database is not configured or not reachable. Both sources produce the same response.
+
 Source files (written by report_activity / report_service, rotated by RotatingFileHandler):
 - output/report_generation_audit.jsonl[.N]  one line per report request (user, prompt, outcome, timing)
 - output/report_coverage_audit.jsonl[.N]    shipment counts per report, joined by request_id
@@ -10,14 +14,19 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import statistics
 import threading
 from collections import Counter
-from datetime import date
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
+
+import psycopg
 
 from app.config import BASE_DIR
+from app.services import audit_db
 
 logger = logging.getLogger("ai_box.audit_trail")
 
@@ -69,6 +78,21 @@ def _coverage_by_request() -> dict[str, dict[str, Any]]:
     return result
 
 
+_IST = ZoneInfo("Asia/Kolkata")
+
+
+def _load(from_date: date, to_date: date) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Generation records (oldest first) and the first coverage record per request_id."""
+    if os.getenv("AI_BOX_AUDIT_READ_SOURCE", "postgres").strip().lower() != "jsonl" and audit_db.get_writer():
+        start = datetime.combine(from_date, time.min, _IST)
+        end = datetime.combine(to_date + timedelta(days=1), time.min, _IST)
+        try:
+            return audit_db.read_report_audit(start, end)
+        except (psycopg.Error, RuntimeError) as exc:
+            logger.warning("Audit database unavailable (%s); reading the JSONL audit files.", type(exc).__name__)
+    return _read("report_generation_audit.jsonl"), _coverage_by_request()
+
+
 def _item(record: dict[str, Any], coverage: dict[str, Any] | None) -> dict[str, Any]:
     filters = record.get("filters") or {}
     completeness = (coverage or {}).get("completeness") or {}
@@ -105,9 +129,9 @@ def query_report_audit(*, from_date: date, to_date: date, user_id: str | None = 
     """Matching report requests, newest first. Dates are IST calendar days, inclusive."""
     start, end = from_date.isoformat(), to_date.isoformat()
     needle = (search or "").strip().casefold()
-    coverage = _coverage_by_request()
+    records, coverage = _load(from_date, to_date)
     items = []
-    for record in _read("report_generation_audit.jsonl"):
+    for record in records:
         if record.get("event") not in (None, "report_generation"):
             continue
         day = str(record.get("started_at_ist") or "")[:10]

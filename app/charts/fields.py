@@ -36,6 +36,11 @@ class MeasureSpec:
     value_format: ValueFormat = "number"
     aliases: tuple[str, ...] = ()
     additive: bool = True                          # can be summed across groups (pie, treemap, "Other")
+    display_label: str | None = None               # KPI card name when it differs from the column label
+
+    @property
+    def card_label(self) -> str:
+        return self.display_label or self.label
 
 
 @dataclass(frozen=True)
@@ -83,6 +88,13 @@ def _is(*values: str) -> frozenset:
 _SHIPPED = _is("in_transit", "delivered", "rto", "exception", "lost")
 
 
+def _reference(value: Any) -> str | None:
+    """An order ID or AWB as a matching key; anything that is not a plain identifier is ignored."""
+    import re
+    text = str(value).strip() if value is not None else ""
+    return text if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_/-]{0,39}", text) else None
+
+
 def _shipment_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
     from app.prompts.shipment_prompt import extract_orders, parse_order, _lookup, _flatten, scrub_text, extended_shipment_fields
     from app.prompts.shipment_prompt import manifest_calendar_day, normalize_shipment_status
@@ -97,6 +109,10 @@ def _shipment_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
             **extended_shipment_fields(record),
             "order_id": order.order_id,
             "awb_number": order.awb_number,
+            # Lookup keys only (never displayed or sent to the AI): the display IDs above are scrubbed, which
+            # masks long numeric order IDs as if they were phone numbers.
+            "order_reference": _reference(_lookup(flat, "order_id")),
+            "awb_reference": _reference(_lookup(flat, "awb_number")),
             "status_category": order.category,
             "status": order.status,
             "shipment_status": normalize_shipment_status(order.status),
@@ -173,7 +189,8 @@ SHIPMENT_ADAPTER = DatasetAdapter(
         MeasureSpec("avg_delivery_days", "Average Delivery Days", "avg", field="delivery_days", additive=False),
         MeasureSpec("median_delivery_days", "Median Delivery Days", "median", field="delivery_days", additive=False),
         MeasureSpec("max_delivery_days", "Maximum Delivery Days", "max", field="delivery_days", additive=False),
-        MeasureSpec("median_charge", "Median Shipping Charge", "median", field="charge", value_format="currency", additive=False),
+        MeasureSpec("median_charge", "Median Shipping Charge", "median", field="charge", value_format="currency", additive=False,
+                    display_label="Median Freight Charge per Shipment"),
         MeasureSpec("delivery_rate", "Delivery Rate", "rate", where=(("status_category", _is("delivered")),),
                     value_format="percent", additive=False,
                     aliases=(r"delivery (?:rate|performance|success)", r"success rate", r"delivered (?:rate|percent)", r"performance")),
@@ -184,15 +201,16 @@ SHIPMENT_ADAPTER = DatasetAdapter(
         MeasureSpec("exception_rate", "Exception Rate", "rate", where=(("status_category", _is("exception")),),
                     value_format="percent", additive=False, aliases=(r"exception rate", r"ndr rate", r"failure rate")),
         MeasureSpec("avg_charge", "Average Shipping Charge", "avg", field="charge", value_format="currency", additive=False,
-                    aliases=(r"(?:average|avg|mean) (?:shipping )?(?:charge|freight|cost)",)),
+                    aliases=(r"(?:average|avg|mean) (?:shipping )?(?:charge|freight|cost)",),
+                    display_label="Average Freight Charge per Shipment"),
         MeasureSpec("avg_order_value", "Average Order Value", "avg", field="order_value", value_format="currency", additive=False,
                     aliases=(r"(?:average|avg|mean) order value", r"\baov\b")),
         MeasureSpec("avg_weight", "Average Weight (kg)", "avg", field="weight", additive=False,
                     aliases=(r"(?:average|avg|mean) weight",)),
         MeasureSpec("shipping_charges", "Shipping Charges", "sum", field="charge", value_format="currency",
-                    aliases=(r"charges?", r"freight", r"shipping cost", r"\bcost\b", r"spend")),
+                    aliases=(r"charges?", r"freight", r"shipping cost", r"\bcost\b", r"spend"), display_label="Total Freight Charges"),
         MeasureSpec("order_value", "Order Value", "sum", field="order_value", value_format="currency",
-                    aliases=(r"order values?", r"revenue", r"\bgmv\b", r"sales")),
+                    aliases=(r"order values?", r"revenue", r"\bgmv\b", r"sales"), display_label="Total Order Value"),
         MeasureSpec("weight", "Total Weight (kg)", "sum", field="weight", aliases=(r"total weight", r"weights?")),
         MeasureSpec("collectable_amount", "Collectable Amount", "sum", field="collectable_amount", value_format="currency",
                     aliases=(r"collectable",)),
@@ -209,7 +227,8 @@ SHIPMENT_ADAPTER = DatasetAdapter(
                     aliases=(r"in[- ]transit",)),
         MeasureSpec("pending_orders", "Pending Orders", "count", where=(("status_category", _is("pending")),),
                     aliases=(r"pending",)),
-        MeasureSpec("orders", "Orders", "count", aliases=(r"shipments?", r"orders?", r"volume", r"count", r"distribution")),
+        MeasureSpec("orders", "Orders", "count", aliases=(r"shipments?", r"orders?", r"volume", r"count", r"distribution"),
+                    display_label="Total Shipments"),
     )},
     rows=_shipment_rows,
     default_measure="orders",

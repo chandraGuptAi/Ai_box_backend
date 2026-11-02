@@ -392,7 +392,14 @@ def normalize_shipment_status(value):
                "intransit": "In Transit", "in transit": "In Transit", "pending": "Pending",
                "undelivered": "Undelivered", "delivered": "Delivered", "cancelled": "Cancelled",
                "canceled": "Cancelled"}
-    return aliases.get(text, scrub_text(value, 80)) if text else None
+    if not text:
+        return None
+    if text in aliases:
+        return aliases[text]
+    # One spelling per status ("pickup_scheduled", "PICKUP SCHEDULED" -> "Pickup Scheduled").
+    clean = scrub_text(re.sub(r"[\s_-]+", " ", str(value).strip()), 80)
+    return " ".join(w.upper() if w.casefold() in {"rto", "ndr", "ofd", "cod", "awb"} else w[:1].upper() + w[1:].lower()
+                    for w in clean.split()) if clean else None
 
 
 def manifest_calendar_day(record, timezone_name="Asia/Kolkata"):

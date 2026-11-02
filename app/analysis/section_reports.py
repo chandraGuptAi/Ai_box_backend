@@ -142,9 +142,46 @@ def section_title(spec):
     return spec.title
 
 
-def card_label(title, measure_label):
-    """Section titles may be up to 160 characters; a metric card label holds at most 120."""
-    return title[:max(1, 118 - len(measure_label))].rstrip() + ": " + measure_label
+def card_label(title, measure, prefixed=False):
+    """A KPI card's own name ("Total Shipments"); prefixed with its section only when two cards would share it.
+
+    Section titles may be up to 160 characters; a metric card label holds at most 120.
+    """
+    label = measure.card_label
+    if not prefixed:
+        return label
+    label = re.sub(r"^Total (?=\w)", "", label)
+    label = label[:1].upper() + label[1:]
+    return title[:max(1, 118 - len(label))].rstrip() + ": " + label
+
+
+def format_inr(value) -> str:
+    """₹ with Indian digit grouping, rounded half-up to paise: 189416.824 -> ₹1,89,416.82."""
+    amount = Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    sign, amount = ("-" if amount < 0 else ""), abs(amount)
+    whole, paise = f"{amount:.2f}".split(".")
+    if len(whole) > 3:
+        head, tail = whole[:-3], whole[-3:]
+        groups = []
+        while len(head) > 2:
+            groups.insert(0, head[-2:])
+            head = head[:-2]
+        whole = ",".join([head, *groups, tail]) if head else ",".join([*groups, tail])
+    return f"{sign}₹{whole}.{paise}"
+
+
+def card_value(value, measure):
+    """(display value, unit) for a KPI card; the exact number stays in metrics.section_metrics."""
+    if value is None:
+        return None, "text"
+    if measure.value_format == "currency":
+        return format_inr(value), "text"
+    if measure.agg in {"rate", "share"} or measure.value_format == "percent":
+        number = float(value)
+        return f"{number:g}%", "text"
+    if measure.agg == "count" and float(value).is_integer():
+        return int(value), "text"
+    return value, "text"
 
 
 def _registered_rows(spec, rows):
@@ -168,7 +205,6 @@ def execute_registered_section(spec, rows, adapter=None, record_label='shipments
     from app.analysis.executor import make_table
     from app.charts.fields import get_adapter
     from app.charts.aggregate import measure
-    from app.errors import ClarificationRequiredError
     adapter = adapter or get_adapter("shipment")
     items = _registered_rows(spec, rows)
     result = SectionDataset(spec, f"{len(items)} {record_label} match this section's analysis subset.", len(items),
@@ -177,9 +213,6 @@ def execute_registered_section(spec, rows, adapter=None, record_label='shipments
     missing = sorted(f for f in required if rows and not any(r.get(f) not in (None, "") for r in rows))
     if missing:
         result.limitations.append("Data not provided: " + ", ".join(adapter.fields[f].label for f in missing) + ".")
-        if spec.missing_data == "clarify":
-            raise ClarificationRequiredError("Required fields are unavailable for the requested analysis.",
-                details={"clarification_required": True, "section_id": spec.id, "missing_fields": missing})
     if "buyer" in spec.dimensions:
         result.limitations.append("Buyer means consignee; opaque labels identify grouping keys.")
         if any(r.get("buyer_identity_basis", "").startswith("approximate") for r in items):
@@ -329,8 +362,9 @@ def verify_registered_section(audit, spec, current, public, rows, dataset):
         for name in spec.metrics:
             if card["key"] == (f"{spec.id}.total.{name}").replace(".", "_"):
                 value = expected_metrics[f"{spec.id}.total.{name}"]
-                from app.analysis.accuracy import number
-                valid = value is not None and number(card['value']) == number(value) and card["label"] == card_label(spec.title, adapter.measures[name].label)
+                metric = adapter.measures[name]
+                labels = {card_label(spec.title, metric), card_label(spec.title, metric, prefixed=True)}
+                valid = value is not None and card["value"] == card_value(value, metric)[0] and card["label"] in labels
                 audit.add("metric_card_"+spec.id, valid, value, card["value"], spec.id)
     charts = [c for c in public["structured_report"].get("charts", []) if c["id"].startswith("section_"+spec.id+"_")]
     notes = public["structured_report"].get("chart_notes", [])
