@@ -204,13 +204,17 @@ class FetchResult:
     attempts: int
     page_size_clamped: bool
     query: dict[str, Any] = field(default_factory=dict)
+    # Set when Ai_Box_Service fetched the rows: personal fields it removed ({field, reason, count}).
+    removed_fields: list[dict[str, Any]] = field(default_factory=list)
+    via: str = "direct"
+    cached: bool = False
 
     def source_info(self) -> dict[str, Any]:
         return {"source": "shipment_api", "fetched_at": self.fetched_at, "upstream_requests": self.requests,
                 "page_size": self.page_size, "pages": self.pages, "fetch_attempts": self.attempts,
                 "page_size_clamped": self.page_size_clamped, "source_snapshot": None,
                 "consistency": "matching total unchanged across every request; the source offers no snapshot",
-                "upstream_query": self.query}
+                "upstream_query": self.query, "fetched_via": self.via, "cached": self.cached}
 
 
 class ShipmentSource:

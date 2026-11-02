@@ -113,6 +113,8 @@ class ReportFilters(BaseModel):
                     "Applied locally after the complete seller source is fetched.",
     )
     timezone: str = Field(default="Asia/Kolkata", max_length=60, description="IANA zone of the selected calendar days.")
+    channel_id: int | None = Field(default=None, ge=1,
+        description="channel_api mode only: the sales channel (Ai_Box_Service GET /channels) whose orders are analysed.")
 
     @model_validator(mode="after")
     def _ordered(self) -> ReportFilters:
@@ -153,11 +155,15 @@ class ReportRequest(BaseModel):
     )
 
     report_type: ReportType = Field(..., description="Report type key, e.g. 'shipment'. See GET /api/reports/types.")
-    source: Literal["payload", "shipment_api"] = Field(
+    attachment_ids: list[Annotated[str, Field(pattern=r'^[a-f0-9]{32}$')]] = Field(default_factory=list, max_length=10)
+    external_source: Literal['shipment_api', 'channel_api'] | None = None
+    presentation_theme: Literal['corporate', 'minimal', 'dark', 'colorful'] | None = None
+    source: Literal["payload", "shipment_api", "channel_api", "attachment"] = Field(
         default="payload",
         description="payload: records are sent in `data`. shipment_api: the backend fetches every shipment matching "
                     "`filters` from the shipment API with the caller's delegated credential; `data` and "
-                    "`expected_records` must be omitted.",
+                    "`expected_records` must be omitted. channel_api: the backend fetches every store order of "
+                    "`filters.channel_id` in the selected period from Ai_Box_Service, with the same credential.",
     )
     prompt: Text = Field(
         default="",
@@ -215,6 +221,14 @@ class ReportRequest(BaseModel):
 
     @model_validator(mode="after")
     def _one_source(self) -> ReportRequest:
+        if self.attachment_ids:
+            if len(set(self.attachment_ids)) != len(self.attachment_ids):
+                raise ValueError('Attachment IDs must be unique')
+            if self.data is not None or self.expected_records is not None:
+                raise ValueError('Attachments cannot be mixed with browser-supplied report data')
+            return self
+        if self.source == 'attachment':
+            raise ValueError('Attachment reports require at least one attachment')
         container = self.data.get("data", self.data) if self.data else {}
         legacy = container.get("report_filter", {}) if isinstance(container, dict) else {}
         pins = (self.filters.pincodes if self.filters is not None else
@@ -226,12 +240,20 @@ class ReportRequest(BaseModel):
                 raise ValueError("data is required when source is 'payload'")
             return self
         if self.data is not None or self.expected_records is not None:
-            raise ValueError("data and expected_records are not accepted when source is 'shipment_api'; "
+            raise ValueError(f"data and expected_records are not accepted when source is '{self.source}'; "
                              "the backend fetches the records and their matching total")
         if self.report_type != "shipment":
-            raise ValueError("source 'shipment_api' supports report_type 'shipment' only")
+            raise ValueError(f"source '{self.source}' supports report_type 'shipment' only")
         if self.filters is None or self.filters.from_date is None or self.filters.to_date is None:
-            raise ValueError("filters.from_date and filters.to_date are required when source is 'shipment_api'")
+            raise ValueError(f"filters.from_date and filters.to_date are required when source is '{self.source}'")
+        if self.source == "channel_api":
+            if self.filters.channel_id is None:
+                raise ValueError("filters.channel_id is required when source is 'channel_api'")
+            # Channel orders are filtered on their order date; shipment statuses do not apply to them.
+            self.filters = self.filters.model_copy(update={"date_field": "order_date", "status": None})
+            return self
+        if self.filters.channel_id is not None:
+            raise ValueError("filters.channel_id is accepted only when source is 'channel_api'")
         if "date_field" not in self.filters.model_fields_set:
             self.filters = self.filters.model_copy(update={"date_field": "manifest_datetime"})
         return self

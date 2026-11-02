@@ -17,6 +17,7 @@ def generate_pptx(report):
     def unit(value): return int(value*scale)
     def rgb(value): return RGBColor.from_string(value.lstrip('#'))
     for spec in slides:
+        theme = spec['theme']
         slide=deck.slides.add_slide(deck.slide_layouts[6])
         for item in spec['items']:
             x,y,w,h=[unit(item[key]) for key in ('x','y','w','h')]
@@ -29,7 +30,7 @@ def generate_pptx(report):
                 tf.margin_left=tf.margin_right=tf.margin_top=tf.margin_bottom=0
                 for index,line in enumerate(item['lines']):
                     p=tf.paragraphs[0] if index==0 else tf.add_paragraph()
-                    p.text=line;p.font.name='Arial';p.font.size=Pt(item['size']*.6)
+                    p.text=line;p.font.name=theme['font'];p.font.size=Pt(item['size']*.6)
                     p.font.bold=item['bold'];p.font.color.rgb=rgb(item['color'])
                     p.line_spacing=Pt(item['leading']*.6);p.space_before=Pt(0);p.space_after=Pt(0)
             elif item['kind']=='image':
@@ -45,12 +46,12 @@ def generate_pptx(report):
                         cell=table.cell(r,c)
                         cell.margin_left=cell.margin_right=unit(16)
                         cell.margin_top=unit(12 if r==0 else 10);cell.margin_bottom=unit(8)
-                        cell.fill.solid();cell.fill.fore_color.rgb=rgb(INK if r==0 else LIGHT if r%2 else WHITE)
+                        cell.fill.solid();cell.fill.fore_color.rgb=rgb(theme['ink'] if r==0 else theme['light'] if r%2 else theme['background'])
                         cell.text='\n'.join(lines)
                         cell.text_frame.word_wrap=False
                         for p in cell.text_frame.paragraphs:
                             p.font.name='Arial';p.font.size=Pt(item['size']*.6);p.font.bold=r==0
-                            p.font.color.rgb=rgb(WHITE if r==0 else INK)
+                            p.font.color.rgb=rgb(theme['background'] if r==0 else theme['ink'])
                             p.line_spacing=Pt(item['size']*1.28*.6);p.space_before=p.space_after=Pt(0)
         slide.notes_slide.notes_text_frame.text='\n\n'.join(spec['notes'])
     output=BytesIO();deck.save(output)

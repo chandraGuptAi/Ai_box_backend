@@ -23,16 +23,16 @@ _LEGACY = {"bar", "line", "area", "pie", "doughnut", "donut"}
 FALLBACK_NOTE = "This chart type cannot be drawn in a document, so its data is shown as a table."
 
 
-def render_png(chart) -> bytes | None:
+def render_png(chart, *, palette=None, background=None, ink=None) -> bytes | None:
     """PNG bytes for a chart, or None when the exporter should use the table fallback."""
     kind = chart.type
     if kind == "map":
         return None
     try:
-        if kind in _LEGACY and len(chart.datasets) == 1 and not chart.options.get("horizontal"):
+        if palette is None and kind in _LEGACY and len(chart.datasets) == 1 and not chart.options.get("horizontal"):
             return chart_png(chart)
         with _LOCK:
-            return _render(chart)
+            return _render(chart, palette=palette, background=background, ink=ink)
     except Exception:
         logger.exception("Chart %s (%s) could not be rendered; using a table.", chart.id, kind)
         return None
@@ -101,14 +101,15 @@ def _short(label: str, n: int = 14) -> str:
     return label if len(label) <= n else label[:n - 1] + "…"
 
 
-def _png(figure) -> bytes:
+def _png(figure, background=None) -> bytes:
     buffer = BytesIO()
     figure.tight_layout()
-    figure.savefig(buffer, format="png", facecolor="#ffffff")
+    figure.savefig(buffer, format="png", facecolor=background or "#ffffff")
     return buffer.getvalue()
 
 
-def _render(chart) -> bytes:
+def _render(chart, palette=None, background=None, ink=None) -> bytes:
+    palette_colors = palette or _COLORS
     kind, labels, sets = chart.type, [str(l) for l in chart.labels], chart.datasets
     fmt = _formatter(chart)
     figure, ax = _figure(polar=kind == "radar")
@@ -118,7 +119,7 @@ def _render(chart) -> bytes:
         bottoms = [0.0] * len(labels)
         for s, d in enumerate(sets):
             pos = [i + (s - (n - 1) / 2) * width if kind == "grouped_bar" else i for i in range(len(labels))]
-            color = _COLORS[s % len(_COLORS)]
+            color = palette_colors[s % len(palette_colors)]
             if horizontal:
                 ax.barh(pos, d.data, height=width, color=color, label=d.label)
             else:
@@ -135,7 +136,7 @@ def _render(chart) -> bytes:
             ax.legend(fontsize=7, frameon=False, loc="upper left", bbox_to_anchor=(1.0, 1.0))
     elif kind in {"line", "area"}:
         for s, d in enumerate(sets):
-            color = _COLORS[s % len(_COLORS)]
+            color = palette_colors[s % len(palette_colors)]
             if kind == "area":
                 ax.fill_between(range(len(labels)), d.data, alpha=0.42, color=color, label=d.label)
                 ax.plot(range(len(labels)), d.data, marker="o", markersize=3.5, color=color)
@@ -147,7 +148,7 @@ def _render(chart) -> bytes:
         ax.legend(fontsize=7, frameon=False)
     elif kind in {"pie", "doughnut", "donut"}:
         d = sets[0]
-        ax.pie(d.data, labels=[_short(l) for l in labels], colors=_COLORS, autopct="%1.1f%%", textprops={"fontsize": 7},
+        ax.pie(d.data, labels=[_short(l) for l in labels], colors=palette_colors, autopct="%1.1f%%", textprops={"fontsize": 7},
                wedgeprops={"width": 0.45} if kind != "pie" else None)
         ax.set_aspect("equal")
     elif kind == "heatmap":
@@ -165,24 +166,24 @@ def _render(chart) -> bytes:
         d = sets[0]
         ax.bxp([{"label": _short(l), "whislo": b.min, "q1": b.q1, "med": b.median, "q3": b.q3, "whishi": b.max, "fliers": []}
                 for l, b in zip(labels, d.boxes)], showfliers=False, patch_artist=True,
-               boxprops={"facecolor": "#c7d2fe", "edgecolor": _COLORS[0]}, medianprops={"color": _COLORS[2]})
+               boxprops={"facecolor": "#c7d2fe", "edgecolor": palette_colors[0]}, medianprops={"color": palette_colors[2]})
         _style(ax, chart)
     elif kind in {"scatter", "bubble"}:
         d = sets[0]
         xs, ys = [p.x for p in d.points], [p.y for p in d.points]
         if kind == "bubble":
             peak = max((p.r or 1) for p in d.points)
-            ax.scatter(xs, ys, s=[60 + 900 * (p.r or 1) / peak for p in d.points], alpha=0.55, color=_COLORS[:len(xs)])
+            ax.scatter(xs, ys, s=[60 + 900 * (p.r or 1) / peak for p in d.points], alpha=0.55, color=palette_colors[:len(xs)])
             for p in d.points:
                 ax.annotate(_short(p.label or ""), (p.x, p.y), fontsize=6, ha="center")
         else:
-            ax.scatter(xs, ys, s=14, alpha=0.7, color=_COLORS[0])
+            ax.scatter(xs, ys, s=14, alpha=0.7, color=palette_colors[0])
         _style(ax, chart)
     elif kind == "funnel":
         d = sets[0]
         peak = max(d.data) or 1
         for i, v in enumerate(d.data):
-            ax.barh(i, v, left=(peak - v) / 2, color=_COLORS[i % len(_COLORS)], height=0.75)
+            ax.barh(i, v, left=(peak - v) / 2, color=palette_colors[i % len(palette_colors)], height=0.75)
             ax.text(peak / 2, i, f"{labels[i]}: {fmt(v)}", ha="center", va="center", fontsize=7, color="#0f172a")
         ax.invert_yaxis()
         ax.axis("off")
@@ -192,11 +193,11 @@ def _render(chart) -> bytes:
         for i, v in enumerate(d.data):
             step = steps[i] if i < len(steps) else "total"
             if step == "total":
-                ax.bar(i, v, color=_COLORS[0])
+                ax.bar(i, v, color=palette_colors[0])
                 running = v
             else:
                 running -= v
-                ax.bar(i, v, bottom=running, color=_COLORS[2])
+                ax.bar(i, v, bottom=running, color=palette_colors[2])
             ax.text(i, (v if step == "total" else running + v) , fmt(v), ha="center", va="bottom", fontsize=6)
         ax.set_xticks(range(len(labels)), [_short(l) for l in labels], rotation=30, ha="right")
         _style(ax, chart)
@@ -204,7 +205,7 @@ def _render(chart) -> bytes:
         ax.axis("off")
         items = sorted(zip(labels, sets[0].data), key=lambda p: p[1], reverse=True)
         for i, (label, value, (x, y, w, h)) in enumerate(_treemap(items, 0, 0, 1, 1)):
-            ax.add_patch(patches.Rectangle((x, y), w, h, facecolor=_COLORS[i % len(_COLORS)], edgecolor="white", linewidth=1.5))
+            ax.add_patch(patches.Rectangle((x, y), w, h, facecolor=palette_colors[i % len(palette_colors)], edgecolor="white", linewidth=1.5))
             if w * h > 0.02:
                 ax.text(x + w / 2, y + h / 2, f"{_short(label)}\n{fmt(value)}", ha="center", va="center", fontsize=6, color="white")
         ax.set_xlim(0, 1)
@@ -212,7 +213,7 @@ def _render(chart) -> bytes:
     elif kind == "radar":
         angles = [2 * math.pi * i / len(labels) for i in range(len(labels))]
         for s, d in enumerate(sets):
-            color = _COLORS[s % len(_COLORS)]
+            color = palette_colors[s % len(palette_colors)]
             ax.plot(angles + angles[:1], d.data + d.data[:1], color=color, label=d.label)
             ax.fill(angles + angles[:1], d.data + d.data[:1], color=color, alpha=0.12)
         ax.set_xticks(angles, [_short(l, 18) for l in labels], fontsize=7)
@@ -224,7 +225,7 @@ def _render(chart) -> bytes:
         low, high = chart.options.get("min", 0), chart.options.get("max", 100) or 100
         share = max(0.0, min(1.0, (value - low) / (high - low)))
         ax.add_patch(patches.Wedge((0, 0), 1, 0, 180, width=0.3, facecolor="#e2e8f0"))
-        ax.add_patch(patches.Wedge((0, 0), 1, 180 - 180 * share, 180, width=0.3, facecolor=_COLORS[1]))
+        ax.add_patch(patches.Wedge((0, 0), 1, 180 - 180 * share, 180, width=0.3, facecolor=palette_colors[1]))
         ax.text(0, 0.1, fmt(value), ha="center", va="center", fontsize=16, color="#0f172a")
         ax.text(0, -0.15, labels[0], ha="center", va="center", fontsize=8, color="#475569")
         ax.set_xlim(-1.1, 1.1)
@@ -233,7 +234,19 @@ def _render(chart) -> bytes:
         ax.axis("off")
     else:
         raise ValueError(f"No static renderer for chart type {kind}")
-    return _png(figure)
+    if background:
+        figure.patch.set_facecolor(background)
+        ax.set_facecolor(background)
+    if ink:
+        ax.tick_params(colors=ink)
+        ax.xaxis.label.set_color(ink)
+        ax.yaxis.label.set_color(ink)
+        for label in ax.texts:
+            label.set_color(ink)
+        legend = ax.get_legend()
+        if legend:
+            for label in legend.get_texts(): label.set_color(ink)
+    return _png(figure, background)
 
 
 def _treemap(items, x, y, w, h):

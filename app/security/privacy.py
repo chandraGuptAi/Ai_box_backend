@@ -1,164 +1,44 @@
-"""Local, fail-closed privacy boundary for every model request.
+"""Privacy filter for every model request: personal data is removed, the request is never blocked.
 
-Known identities live in request-local context only. They are never logged or
-restored into provider messages. No network-backed detector is used.
+The filter runs in Ai_Box_Service (POST /api/privacy/filter). When that service is not configured or
+does not answer, the same engine runs locally (app/security/privacy_engine.py). A local
+deterministic re-scan always runs last. Known identities and the removal record live in
+request-local context only; they are never logged.
 """
 from __future__ import annotations
 
 import json
 import logging
+import os
 import re
-import threading
-import unicodedata
 import uuid
 from collections import Counter
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import lru_cache
-from types import SimpleNamespace
+
+import httpx
 
 from app.errors import AIPrivacyError
+from app.security.privacy_engine import MASK, Redactor, collect_identities, load_detector
 
-MASK = '[REDACTED]'
 logger = logging.getLogger('ai_box.security.privacy')
 _identities = ContextVar('ai_privacy_identities', default=frozenset())
 _audit_id = ContextVar('ai_privacy_audit_id', default=None)
-_lock = threading.Lock()
-MAX_TEXT = 250_000
-MAX_DEPTH = 32
-
-
-def _key(value):
-    return re.sub(r'[^a-z0-9]', '', unicodedata.normalize('NFKC', str(value)).casefold())
-
-
-_SENSITIVE = re.compile(
-    r'^(?:name|fullname|firstname|lastname|middlename|displayname|legalname|businessname|tradingname|companyname|customerid|sellerid|userid|'
-    r'seller|merchant|owner|beneficiary|proprietor|company|'
-    r'(?:seller|owner|customer|consignee|buyer|merchant|beneficiary|account(?:holder)?|contact|director|proprietor|father|mother|spouse)'
-    r'(?:name|fullname|firstname|lastname|id)|'
-    r'.*(?:email|mobile|phone|telephone|whatsapp|aadhaar|aadhar|pancard|pannumber|panid|passport|'
-    r'voterid|drivinglicen[cs]e|bankaccount|accountnumber|ifsc|gstin|gstnumber|taxid|kyc|'
-    r'identitydocument|idproof|addressproof|signature|selfie|dob|dateofbirth|password|secret|accesstoken|apikey|authorization|panno|gstno|upiid).*|'
-    r'.*(?:address|addressline)[0-9]*|'
-    r'(?:pan|gst|iban|swift|address|street|streetaddress|shippingaddress|billingaddress|residentialaddress))$')
-# Generic numeric identifiers, credentials and KYC documents have no analytical use.
-_PATTERNS = (
-    ('email', re.compile(r'(?<![\w.+-])[\w.!#$%&\x27*+/=?^`{|}~-]+@[\w-]+(?:\.[\w-]+)+', re.I)),
-    ('upi', re.compile(r'(?<![\w.+-])[\w.+-]+@[a-z][a-z0-9.-]*(?!\w)', re.I)),
-    ('email_obfuscated', re.compile(r'\b[\w.+-]+\s*(?:\[at\]|\(at\)| at )\s*[\w-]+\s*(?:\[dot\]|\(dot\)| dot )\s*[a-z]{2,}\b', re.I)),
-    ('pan', re.compile(r'(?<![a-z0-9])[a-z]{5}[ -]?[0-9]{4}[ -]?[a-z](?![a-z0-9])', re.I)),
-    ('gst', re.compile(r'(?<![a-z0-9])[0-9]{2}[a-z]{5}[0-9]{4}[a-z][a-z0-9]z[a-z0-9](?![a-z0-9])', re.I)),
-    ('ifsc', re.compile(r'(?<![a-z0-9])[a-z]{4}0[a-z0-9]{6}(?![a-z0-9])', re.I)),
-    ('iban', re.compile(r'(?<![a-z0-9])[a-z]{2}[0-9]{2}(?: ?[a-z0-9]){10,30}(?![a-z0-9])', re.I)),
-    ('passport', re.compile(r'(?<![a-z0-9])[a-z][0-9]{7}(?![a-z0-9])', re.I)),
-    ('long_identifier', re.compile(r'(?<!\w)(?:\+\s*)?(?:[0-9][\s().-]*){9,19}(?!\w)')),
-    ('credential', re.compile(r'\bBearer\s+[a-z0-9._~+/=-]+|\bsk-[a-z0-9_-]{8,}', re.I)),
-    ('url', re.compile(r'https?://[^\s<>"\x27]+|data:[^\s<>"\x27]+', re.I)),
-    ('street_address', re.compile(r'\b[0-9]+\s+(?:[\w.-]+\s+){0,5}(?:street|road|lane|avenue|nagar|colony)\b[^\n;<>]*', re.I)),
-)
-_LABEL = re.compile(
-    r'(?im)\b(?:(?:seller|owner|customer|merchant|beneficiary|account holder|father|mother|spouse|company)\s+name|'
-    r'my name|full name|email|mobile|phone|aadhaar|aadhar|pan(?: card| number| no\.?)?|passport|'
-    r'bank account|account number|ifsc|gstin|kyc|date of birth|dob|address|seller id)'
-    r'\s*(?:is\s+|[:=]\s*)([^\n;|<>]+)')
-_HINDI_LABEL = re.compile(r'(?:मेरा नाम|विक्रेता का नाम|नाम|पता|आधार(?: नंबर)?|पैन(?: नंबर)?)\s*[:=]?\s+[^\n;|<>]+')
-# Encoded/opaque files cannot be scanned as text. They must never reach a text model.
-_OPAQUE = re.compile(r'(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{160,}={0,2}(?![A-Za-z0-9+/])')
-_UNINSPECTABLE = re.compile(r'\bbase64\b|-----BEGIN |%[0-9a-f]{2}|\b0x[0-9a-f]{24,}', re.I)
-_CONTROL = re.compile(r'[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]')
-# Fixed public reporting vocabulary, never caller-supplied exemptions. Exact
-# known seller identities are still masked before local entity recognition.
-_PUBLIC_TERMS = frozenset(word.casefold() for word in (
-    'JSON', 'SQL', 'UI', 'ISO', 'YYYY-MM-DD', 'COD', 'Prepaid', 'RTO', 'NDR', 'OFD',
-    'KPI', 'PDF', 'DOCX', 'PPTX', 'AWB', 'LRN', 'PIN', 'PAN', 'GST', 'KYC',
-    'Delivered', 'Undelivered', 'In Transit', 'in_transit', 'Pending', 'Cancelled',
-    'Shipment', 'shipments', 'English', 'Hindi', 'Hinglish', 'Devanagari', 'NEVER'))
-# Statistical name detection is weak for Devanagari. Permit a fixed reporting
-# vocabulary; unknown words are ambiguous and block instead of being sent raw.
-_HINDI_REPORT_WORDS = frozenset(('शिपमेंट शिपमेंट्स रिपोर्ट रिपोर्ट्स बनाओ बनाएं बनाइए बनाना करो करें '
-    'दिखाओ दिखाएं दिखाइए दिखाना दो दें बताओ बताएं विश्लेषण जानकारी विवरण सारांश चार्ट ग्राफ '
-    'तालिका टेबल डिलीवरी डिलीवर डिलीवर्ड रिटर्न आरटीओ सीओडी पिन पिनकोड पिनकोडों '
-    'कूरियर कुरियर ऑर्डर ऑर्डर्स शिपिंग शुल्क चार्ज चार्जेस लागत कुल औसत संख्या प्रतिशत '
-    'दर स्थिति स्टेटस लंबित रद्द सफल असफल वितरण ट्रेंड तुलना प्रदर्शन पिछले पिछली दिनों '
-    'दिन महीने महीना सप्ताह साल आज कल अभी सभी सारे केवल सिर्फ मेरे मेरी मुझे हमारा '
-    'हमारे की का के को में से तक पर और या साथ बिना लिए लिये नहीं हटाओ जोड़ो जोड़ें '
-    'इस उस एक हैं है हुए हुआ हुई सबसे ज्यादा कम अधिक अनुसार आधार तैयार कर कृपया '
-    'शहर शहरों राज्य राज्यों दिल्ली मुंबई बेंगलुरु चेन्नई हैदराबाद पुणे अहमदाबाद '
-    'भुगतान प्रीपेड कैश डिलीवरी ट्रांजिट इनसाइट इनसाइट्स').split())
+# {'removed': {fingerprint: category}, 'filters': set of filter names used}; one per outermost context.
+_ledger = ContextVar('ai_privacy_ledger', default=None)
+SERVICE_TOKEN_HEADER = 'X-Ai-Box-Service-Token'
 
 
 @lru_cache(maxsize=1)
-def _name_detector():
-    import spacy
-    english = spacy.load('en_core_web_sm', disable=['tagger', 'parser', 'lemmatizer', 'attribute_ruler'])
-    multilingual = spacy.load('xx_ent_wiki_sm')
-    if any('ner' not in model.pipe_names for model in (english, multilingual)):
-        raise RuntimeError('Missing local name detector')
-    return _LocalNames((english, multilingual))
+def _field_names():
+    from app.charts.fields import get_adapter
+    adapter = get_adapter('shipment')
+    return frozenset(adapter.fields.keys() | adapter.measures.keys())
 
 
-class _LocalNames:
-    def __init__(self, models):
-        self.models = models
-
-    def __call__(self, text):
-        # People can be labelled ORG (e.g. an individual trading under their own
-        # name). Conservatively redact both persons and organizations.
-        models = self.models if any(ord(c) > 127 and c.isalpha() for c in text) else self.models[:1]
-        spans = sorted((entity.start_char, entity.end_char) for model in models
-                       for entity in model(text).ents if (entity.label_ in {'PERSON', 'PER'} or
-                           (entity.label_ == 'ORG' and len(entity.text.split()) > 1))
-                       and entity.text.casefold().strip() not in _PUBLIC_TERMS)
-        merged = []
-        for start, end in spans:
-            if merged and start < merged[-1][1]:
-                merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
-            else:
-                merged.append((start, end))
-        return SimpleNamespace(ents=[SimpleNamespace(start_char=start, end_char=end,
-            text=text[start:end], label_='PERSON') for start, end in merged])
-
-
-def _normalize(text):
-    text = _CONTROL.sub('', unicodedata.normalize('NFKC', text))
-    return ''.join(str(unicodedata.digit(c)) if c.isdigit() else c for c in text)
-
-
-def _json_parts(text):
-    """Decode embedded JSON, including JSON inside XML prompt delimiters."""
-    decoder, pos = json.JSONDecoder(), 0
-    while pos < len(text):
-        match = re.search(r'[\[{]', text[pos:])
-        if not match:
-            return
-        start = pos + match.start()
-        try:
-            value, end = decoder.raw_decode(text, start)
-        except ValueError:
-            pos = start + 1
-            continue
-        if isinstance(value, (dict, list)):
-            yield start, end, value
-        pos = end
-
-
-def _collect(value, found, depth=0, sensitive=False):
-    if depth > MAX_DEPTH:
-        raise ValueError('Privacy context nesting limit')
-    if isinstance(value, dict):
-        for key, item in value.items():
-            _collect(item, found, depth+1, sensitive or _sensitive_key(key, value))
-    elif isinstance(value, list):
-        for item in value:
-            _collect(item, found, depth+1, sensitive)
-    elif isinstance(value, (str, int, float)) and not isinstance(value, bool):
-        text = _normalize(str(value)).strip()
-        if sensitive and text and text != MASK:
-            found.add(text)
-        elif isinstance(value, str):
-            for _, _, item in _json_parts(text):
-                _collect(item, found, depth+1)
+def _collect(value, found):
+    collect_identities(value, found, field_names=_field_names())
 
 
 @contextmanager
@@ -167,16 +47,18 @@ def privacy_context(*values):
         found = set(_identities.get())
         for value in values:
             _collect(value, found)
-        token = _identities.set(frozenset(found))
-        audit_token = _audit_id.set(_audit_id.get() or uuid.uuid4().hex)
     except Exception:
         _event('blocked', 'context_failed', {})
         raise AIPrivacyError('The privacy check could not safely inspect this request.') from None
+    token = _identities.set(frozenset(found))
+    audit_token = _audit_id.set(_audit_id.get() or uuid.uuid4().hex)
+    ledger_token = _ledger.set(_ledger.get() or {'removed': {}, 'filters': set()})
     try:
         yield
     finally:
         _identities.reset(token)
         _audit_id.reset(audit_token)
+        _ledger.reset(ledger_token)
 
 
 def register_source_identities(value):
@@ -190,155 +72,160 @@ def register_source_identities(value):
         raise AIPrivacyError('The privacy check could not safely inspect the source data.') from None
 
 
-def _event(action, reason, counts):
+def record_source_removals(fields):
+    """Fields Ai_Box_Service removed from the fetched shipments: [{field, reason, count}], no values."""
+    ledger = _ledger.get()
+    if ledger is not None:
+        for item in fields or ():
+            key = (str(item.get('field')), str(item.get('reason')))
+            ledger.setdefault('source_fields', {})[key] = max(int(item.get('count') or 0),
+                                                              ledger.get('source_fields', {}).get(key, 0))
+
+
+def privacy_summary() -> dict:
+    """What this request removed: AI-call counts per category, filters used, and fields removed at the source."""
+    ledger = _ledger.get() or {'removed': {}, 'filters': set()}
+    summary = {'counts': dict(Counter(ledger['removed'].values())), 'filters': sorted(ledger['filters'])}
+    if ledger.get('source_fields'):
+        summary['source_fields'] = [{'field': f, 'reason': r, 'count': n}
+                                    for (f, r), n in sorted(ledger['source_fields'].items())]
+    return summary
+
+
+_NOTE_GROUPS = (
+    ('person or business name', 'person or business names',
+     {'person', 'known_identity', 'labelled_name', 'honorific_name', 'surname', 'field_name'}),
+    ('phone number', 'phone numbers', {'field_phone'}),
+    ('long number (phone, account, order or AWB number)', 'long numbers (phone, account, order or AWB numbers)',
+     {'long_identifier'}),
+    ('email address', 'email addresses', {'email', 'email_obfuscated', 'field_email'}),
+    ('ID document number (PAN, GST, passport)', 'ID document numbers (PAN, GST, passport)',
+     {'pan', 'gst', 'passport', 'field_id'}),
+    ('bank or UPI detail', 'bank or UPI details', {'ifsc', 'iban', 'upi', 'field_bank'}),
+    ('address', 'addresses', {'street_address', 'field_address'}),
+    ('labelled personal detail', 'labelled personal details', {'labelled_detail'}),
+    ('access credential', 'access credentials', {'credential', 'field_credential'}),
+    ('web link', 'web links', {'url'}),
+    ('encoded block', 'encoded blocks', {'encoded'}),
+)
+
+
+def _source_fields_text(fields) -> str:
+    """'consignee name, mobile, email, address (personal or business name, contact detail, address)' style."""
+    if not fields:
+        return ''
+    reasons: dict[str, list[str]] = {}
+    for item in fields:
+        label = re.sub(r'(?<=[a-z])(?=[A-Z])', ' ', str(item['field']).replace('[]', '')).replace('.', ' ').lower()
+        reasons.setdefault(item['reason'], []).append(label)
+    return '; '.join(f'{", ".join(dict.fromkeys(labels))} ({reason})' for reason, labels in reasons.items())
+
+
+def privacy_note(summary: dict) -> str | None:
+    """The reader-facing note on what was kept from the AI, or None when nothing needs saying."""
+    counts = summary.get('counts') or {}
+    parts = []
+    for singular, plural, categories in _NOTE_GROUPS:
+        total = sum(counts.get(c, 0) for c in categories)
+        if total:
+            parts.append(f'{total} {singular if total == 1 else plural}')
+    known = set().union(*(g[2] for g in _NOTE_GROUPS))
+    if other := sum(n for c, n in counts.items() if c not in known):
+        parts.append(f'{other} other personal detail' + ('s' if other > 1 else ''))
+    basic = 'basic' in summary.get('filters', ())
+    source = _source_fields_text(summary.get('source_fields'))
+    if not parts and not basic and not source:
+        return None
+    note = 'Privacy:'
+    if source:
+        note += (f' these fields were removed from the shipment data before analysis because they are personal '
+                 f'data and not needed for this report: {source}.')
+    if parts:
+        note += (f' {"Also" if source else "To protect personal data,"} removed before AI analysis: {", ".join(parts)}. '
+                 'All figures were calculated from the complete data; only the AI-written text did not see these '
+                 'details.')
+    if note == 'Privacy:':
+        note += ' no personal data was found.'
+    if basic:
+        note += (' The privacy service was unavailable, so a basic filter (number patterns and labelled names) '
+                 'was used for this report.')
+    elif 'local' in summary.get('filters', ()):
+        note += ' The privacy service was unavailable, so the same filter ran locally.'
+    return note
+
+
+def _event(action, reason, counts, source=None):
     # Never log content, exception messages, field paths, IDs, hashes or matched values.
     logger.warning('%s', json.dumps({'event': 'ai_privacy', 'action': action,
-                                    'audit_id': _audit_id.get() or uuid.uuid4().hex,
-                                    'reason': reason, 'categories': dict(+Counter(counts))}, sort_keys=True))
+                                    'audit_id': _audit_id.get() or uuid.uuid4().hex, 'reason': reason,
+                                    'filter': source, 'categories': dict(+Counter(counts))}, sort_keys=True))
 
 
-def _sensitive_key(key, owner):
-    # Registered operation metadata uses "name" for metrics, not a person's name.
-    if _key(key) == 'name' and any(k in owner for k in ('agg', 'kind', 'aliases')):
-        from app.charts.fields import get_adapter
-        adapter = get_adapter('shipment')
-        if isinstance(owner.get('name'), str) and owner['name'] in (adapter.fields.keys() | adapter.measures.keys()):
-            return False
-    return bool(_SENSITIVE.fullmatch(_key(key)))
+@lru_cache(maxsize=1)
+def _local_detector():
+    try:
+        return load_detector()
+    except Exception:
+        logger.error('Local name detector unavailable; the fallback filter masks patterns and labelled names only.')
+        return None
 
 
-def _text_fragments(value, depth=0):
-    """Scan JSON strings in their own context, not across unrelated schema fields."""
-    if depth > MAX_DEPTH:
-        raise ValueError('Privacy scan limit')
-    if isinstance(value, dict):
-        for key, item in value.items():
-            if ' ' in key:
-                yield key
-            yield from _text_fragments(item, depth+1)
-    elif isinstance(value, list):
-        for item in value:
-            yield from _text_fragments(item, depth+1)
-    elif isinstance(value, str):
-        pos = 0
-        parts = list(_json_parts(value))
-        for start, end, item in parts:
-            yield value[pos:start]
-            yield from _text_fragments(item, depth+1)
-            pos = end
-        yield value[pos:]
+def _service_filter(messages, identities):
+    """(messages, {fingerprint: category}) from Ai_Box_Service, or None when it is not configured or fails."""
+    base_url = os.getenv('AI_BOX_SERVICE_URL', '').strip().rstrip('/')
+    if not base_url or os.getenv('PRIVACY_FILTER_SERVICE', 'true').strip().lower() in {'0', 'false', 'no', 'off'}:
+        return None
+    headers = {}
+    if token := os.getenv('AI_BOX_SERVICE_TOKEN', '').strip():
+        headers[SERVICE_TOKEN_HEADER] = token
+    try:
+        with httpx.Client(timeout=float(os.getenv('PRIVACY_FILTER_TIMEOUT_SECONDS', '10') or 10),
+                          trust_env=False) as client:
+            res = client.post(f'{base_url}/api/privacy/filter', headers=headers, json={
+                'messages': messages, 'identities': sorted(identities), 'field_names': sorted(_field_names())})
+        res.raise_for_status()
+        body = res.json()
+        protected, removed = body['messages'], body['removed']
+        if (not isinstance(protected, list) or len(protected) != len(messages) or
+                any(not isinstance(m, dict) or m.get('role') != o['role'] or not isinstance(m.get('content'), str)
+                    for m, o in zip(protected, messages))):
+            raise ValueError
+        return ([{'role': m['role'], 'content': m['content']} for m in protected],
+                {str(item['ref']): str(item['category']) for item in removed})
+    except Exception:
+        logger.warning('Privacy service unavailable; using the local privacy filter.')
+        return None
 
 
 class PrivacyGuard:
     def protect(self, messages):
-        counts = Counter()
-        try:
-            if not isinstance(messages, list) or not messages:
-                raise ValueError('Invalid messages')
-            if sum(len(m.get('content', '')) for m in messages if isinstance(m, dict) and isinstance(m.get('content'), str)) > MAX_TEXT:
-                raise ValueError('Privacy input limit')
-            found = set(_identities.get())
-            _collect(messages, found)
-            # A model must be installed locally. There is no regex-only fallback.
-            with _lock:
-                detector = _name_detector()
-                protected = []
-                for message in messages:
-                    if (not isinstance(message, dict) or set(message) != {'role', 'content'} or
-                            message['role'] not in {'system', 'user', 'assistant'} or not isinstance(message['content'], str)):
-                        raise ValueError('Unsupported model input')
-                    protected.append({'role': message['role'], 'content': self._text(message['content'], found, counts, detector, 0)})
-            # Independently re-scan known identities and deterministic patterns before dispatch.
-            for message in protected:
-                text = message['content']
-                if any(pattern.search(text) for _, pattern in _PATTERNS) or _OPAQUE.search(text):
-                    raise ValueError('Residual sensitive content')
-                for identity in found:
-                    if identity != MASK and self._identity_pattern(identity).search(text):
-                        raise ValueError('Residual identity')
-                with _lock:
-                    # A second local pass may discover names whose context changed
-                    # after redaction. Ambiguity blocks dispatch, never relaxes it.
-                    if any(entity.label_ in {'PERSON', 'PER'} and MASK not in entity.text
-                           for fragment in _text_fragments(text) if fragment.strip() and fragment != MASK
-                           for entity in detector(fragment).ents):
-                        raise ValueError('Residual person')
-        except Exception:
-            _event('blocked', 'inspection_failed', counts)
-            raise AIPrivacyError('The request was blocked because its data could not be safely protected for AI processing.') from None
-        _event('sanitized' if +counts else 'allowed', 'checked', counts)
+        if (not isinstance(messages, list) or not messages or any(
+                not isinstance(m, dict) or set(m) != {'role', 'content'} or m['role'] not in {'system', 'user', 'assistant'}
+                or not isinstance(m['content'], str) for m in messages)):
+            # A programming error, not seller content: nothing is sent.
+            _event('blocked', 'invalid_messages', {})
+            raise AIPrivacyError('The AI request was malformed and was not sent.')
+        found = set(_identities.get())
+        _collect(messages, found)
+        result = _service_filter(messages, found)
+        if result is not None:
+            protected, removed, source = *result, 'service'
+        else:
+            detector = _local_detector()
+            local = Redactor(found, detector, _field_names())
+            protected, removed, source = local.messages(messages), local.removed, 'local' if detector else 'basic'
+        # Independent deterministic re-scan of whatever the filter returned.
+        final = Redactor(found, None, _field_names())
+        protected = final.messages(protected)
+        removed = {**removed, **final.removed}
+        ledger = _ledger.get()
+        if ledger is not None:
+            ledger['filters'].add(source)
+            for ref, category in removed.items():
+                ledger['removed'].setdefault(ref, category)
+        counts = Counter(removed.values())
+        _event('sanitized' if counts else 'allowed', 'checked', counts, source)
         return protected
-
-    @staticmethod
-    def _identity_pattern(identity):
-        return re.compile(r'(?<!\w)' + re.escape(identity) + r'(?!\w)', re.I)
-
-    def _text(self, text, identities, counts, detector, depth):
-        if depth > MAX_DEPTH or len(text) > MAX_TEXT:
-            raise ValueError('Privacy scan limit')
-        text = _normalize(text)
-        if _OPAQUE.search(text) or _UNINSPECTABLE.search(text):
-            raise ValueError('Uninspectable encoded input')
-        parts = list(_json_parts(text))
-        if parts:
-            output, pos = [], 0
-            for start, end, item in parts:
-                output.append(self._plain(text[pos:start], identities, counts, detector))
-                output.append(json.dumps(self._value(item, identities, counts, detector, depth+1), ensure_ascii=False))
-                pos = end
-            output.append(self._plain(text[pos:], identities, counts, detector))
-            return ''.join(output)
-        return self._plain(text, identities, counts, detector)
-
-    def _value(self, value, identities, counts, detector, depth):
-        if depth > MAX_DEPTH:
-            raise ValueError('Privacy scan limit')
-        if isinstance(value, dict):
-            result = {}
-            for key, item in value.items():
-                safe_key = self._plain(key, identities, counts, detector, names=' ' in key)
-                if _sensitive_key(key, value):
-                    counts['sensitive_field'] += 1
-                    result[safe_key] = MASK
-                else:
-                    if safe_key in result:
-                        raise ValueError('Redacted key collision')
-                    result[safe_key] = self._value(item, identities, counts, detector, depth+1)
-            return result
-        if isinstance(value, list):
-            return [self._value(v, identities, counts, detector, depth+1) for v in value]
-        if isinstance(value, str):
-            return self._text(value, identities, counts, detector, depth+1)
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            text = str(value)
-            if text in identities or any(p.search(text) for _, p in _PATTERNS):
-                counts['numeric_identifier'] += 1
-                return MASK
-        return value
-
-    def _plain(self, text, identities, counts, detector, names=True):
-        for identity in sorted(identities, key=len, reverse=True):
-            text, count = self._identity_pattern(identity).subn(MASK, text)
-            counts['known_identity'] += count
-        for label, pattern in _PATTERNS:
-            text, count = pattern.subn(MASK, text)
-            counts[label] += count
-        for pattern in (_LABEL, _HINDI_LABEL):
-            text, count = pattern.subn(MASK, text)
-            counts['labelled_identity'] += count
-        for word in re.findall(r'[\u0900-\u097f]+', text):
-            word = ''.join(c for c in word if unicodedata.category(c)[0] in {'L', 'M'})
-            if word and word not in _HINDI_REPORT_WORDS:
-                raise ValueError('Uncertain non-Latin identity')
-        if any(c.isalpha() and 'LATIN' not in unicodedata.name(c, '') and not '\u0900' <= c <= '\u097f' for c in text):
-            raise ValueError('Unsupported privacy language')
-        if names and text.strip():
-            entities = detector(text).ents
-            for entity in reversed(entities):
-                if entity.label_ in {'PERSON', 'PER'} and MASK not in entity.text:
-                    text = text[:entity.start_char] + MASK + text[entity.end_char:]
-                    counts['person'] += 1
-        return text
 
 
 guard = PrivacyGuard()

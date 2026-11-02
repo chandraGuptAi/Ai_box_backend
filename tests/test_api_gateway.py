@@ -69,3 +69,31 @@ def test_configured_service_requires_token(monkeypatch):
     monkeypatch.delenv("ESCALATION_SERVICE_TOKEN", raising=False)
     with pytest.raises(ValueError, match="TOKEN"):
         install(FastAPI())
+
+
+def test_channel_wise_report_route_reaches_ai_box_service(monkeypatch):
+    monkeypatch.setenv("AI_BOX_SERVICE_URL", "http://ai-box:8100")
+    monkeypatch.setenv("AI_BOX_SERVICE_TOKEN", "box-secret")
+    seen = []
+
+    async def upstream(request):
+        seen.append(request)
+        class Stream(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                yield b'{"channels": []}'
+        return httpx.Response(200, stream=Stream(), headers={"Content-Type": "application/json"})
+
+    app = FastAPI()
+    gateways = install(app)
+    with TestClient(app) as client:
+        transport_client = httpx.AsyncClient(transport=httpx.MockTransport(upstream))
+        for gateway in gateways.values():
+            gateway.client = transport_client
+        response = client.get("/api/channel_wise_report/channels",
+                              headers={"X-Shipment-Authorization": "Bearer seller-token",
+                                       "X-Ai-Box-Service-Token": "forged"})
+        client.portal.call(transport_client.aclose)
+    assert response.status_code == 200
+    assert str(seen[0].url) == "http://ai-box:8100/api/channel_wise_report/channels"
+    assert seen[0].headers["x-shipment-authorization"] == "Bearer seller-token"
+    assert seen[0].headers["x-ai-box-service-token"] == "box-secret"

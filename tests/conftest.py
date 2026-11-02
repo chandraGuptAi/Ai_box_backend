@@ -8,6 +8,14 @@ from app.config import settings
 
 
 @pytest.fixture(autouse=True)
+def local_privacy_filter(monkeypatch):
+    """Tests use the in-process privacy engine and the direct shipment fetch, never a running Ai_Box_Service."""
+    monkeypatch.setenv("PRIVACY_FILTER_SERVICE", "false")
+    monkeypatch.setenv("SHIPMENT_SOURCE", "direct")
+    monkeypatch.setenv("REPORT_MEMORY", "false")
+
+
+@pytest.fixture(autouse=True)
 def legacy_report_mode():
     """Legacy regressions explicitly exercise the supported rule-only mode.
 

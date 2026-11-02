@@ -64,17 +64,18 @@ class RequestSizeLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
+        max_bytes = max(self.max_bytes, 21 * 1024 * 1024) if scope.get('path') == '/api/attachments' else self.max_bytes
         content_length = _header(scope, b"content-length")
         if content_length is not None:
             if not content_length.isdigit():
                 await _send_error(send, 400, "invalid_content_length", "Invalid Content-Length header.")
                 return
-            if int(content_length) > self.max_bytes:
+            if int(content_length) > max_bytes:
                 await _send_error(
                     send,
                     413,
                     "request_too_large",
-                    f"Request body exceeds the maximum allowed size of {self.max_bytes} bytes.",
+                    f"Request body exceeds the maximum allowed size of {max_bytes} bytes.",
                 )
                 return
 
@@ -85,8 +86,8 @@ class RequestSizeLimitMiddleware:
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
-                if received > self.max_bytes:
-                    raise RequestTooLargeError(self.max_bytes)
+                if received > max_bytes:
+                    raise RequestTooLargeError(max_bytes)
             return message
 
         await self.app(scope, limited_receive, send)

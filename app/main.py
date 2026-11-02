@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.report_routes import router as report_router
+from app.api.attachment_routes import router as attachment_router
 from app.config import settings
 from app.errors import AppError, error_payload, request_id_var
 from app.middleware import RequestIdMiddleware, RequestSizeLimitMiddleware
@@ -119,6 +120,7 @@ from app.api.insights_routes import router as insights_router
 from app.api.skill_routes import router as skill_router, prompt_router
 
 app.include_router(report_router)
+app.include_router(attachment_router)
 app.include_router(insights_router)
 app.include_router(skill_router)
 app.include_router(prompt_router)

@@ -16,10 +16,10 @@ from app.models.report_schema import ReportTable, TableColumn
 MISSING = "—"
 
 
-def execute_ordered_sections(plan: AnalysisPlan, rows):
+def execute_ordered_sections(plan: AnalysisPlan, rows, adapter=None, record_label='shipments'):
     """Execute the same validated AnalysisPlan's ordered coverage obligations."""
     from app.analysis.section_reports import execute_registered_section
-    return [execute_registered_section(spec, rows) for spec in plan.sections]
+    return [execute_registered_section(spec, rows, adapter=adapter, record_label=record_label) for spec in plan.sections]
 
 
 # --- Filtering -----------------------------------------------------------------------
@@ -79,7 +79,7 @@ def _display(value: Any, kind: str, decimals: int | None) -> str:
     if kind in ("currency", "number", "percent") and isinstance(value, (int, float)) and not isinstance(value, bool):
         places = 2 if decimals is None and kind == "currency" else decimals or 0
         text = f"{value:,.{places}f}"
-        return text
+        return '\u20b9' + text if kind == 'currency' else text
     return str(value)
 
 

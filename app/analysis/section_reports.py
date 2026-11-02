@@ -60,7 +60,8 @@ def narrative_messages(prompt, plan, datasets, scope):
         "Buyer means consignee. Volume ranking is not best performance. Do not add tracking/data-debug issues. "
         "Do not add sections, KPIs, tables or values. Keep zero-result/unavailable sections and truthful limitations. "
         "When the plan requests recommendations, give conditional review actions grounded in metric references; "
-        "do not assert unobserved causes or guarantee improvements."},
+        "do not assert unobserved causes or guarantee improvements. "
+        "Respect scope.record_type: channel orders are orders. For currency metrics use INR with the rupee symbol."},
         {"role": "user", "content": json.dumps(payload, default=str, ensure_ascii=True)}]
 
 
@@ -80,7 +81,17 @@ def grounded_text(raw, datasets):
             valid = valid and all(Decimal(v.replace(",", "")) in allowed for v in values)
             valid = valid and not re.search(r"\b(?:caus\w*|because|due to|driven by|first.time|best performance|issues?|anomal\w*|tracking errors?)\b", claim.text, re.I)
             if valid:
-                texts.append(claim.text)
+                currency_names = {column.key for table in dataset.tables for column in table.column_meta or []
+                                  if column.type == 'currency'}
+                money_values = {Decimal(str(dataset.metrics[key])) for key in claim.metric_ids
+                                if key.rsplit('.', 1)[-1] in currency_names}
+                def currency(match):
+                    value = Decimal(match[0].replace(',', ''))
+                    if value in money_values:
+                        return f'\u20b9{value:,.2f}'
+                    return match[0]
+                text = re.sub(r'(?<![\w\u20b9,.])\d[\d,]*(?:\.\d+)?', currency, claim.text)
+                texts.append(text)
         out[identifier] = texts or [dataset.text]
         repaired = repaired or not texts
     return out, repaired
@@ -152,15 +163,15 @@ def _required_fields(spec, adapter):
     return required
 
 
-def execute_registered_section(spec, rows):
+def execute_registered_section(spec, rows, adapter=None, record_label='shipments'):
     """Compose the existing adapter's registered operations; no section-name dispatch."""
     from app.analysis.executor import make_table
     from app.charts.fields import get_adapter
     from app.charts.aggregate import measure
     from app.errors import ClarificationRequiredError
-    adapter = get_adapter("shipment")
+    adapter = adapter or get_adapter("shipment")
     items = _registered_rows(spec, rows)
-    result = SectionDataset(spec, f"{len(items)} shipments match this section's analysis subset.", len(items),
+    result = SectionDataset(spec, f"{len(items)} {record_label} match this section's analysis subset.", len(items),
         metrics={spec.id+".shipments": len(items)})
     required = _required_fields(spec, adapter)
     missing = sorted(f for f in required if rows and not any(r.get(f) not in (None, "") for r in rows))
@@ -173,7 +184,7 @@ def execute_registered_section(spec, rows):
         result.limitations.append("Buyer means consignee; opaque labels identify grouping keys.")
         if any(r.get("buyer_identity_basis", "").startswith("approximate") for r in items):
             result.limitations.append("Consignee identities are approximate name/city/pincode groupings, not verified people or first-time buyers.")
-    result.limitations.append(f"Section denominator: {len(items)} shipments after this section's filters. Rates use this subset within each group; averages exclude missing metric values.")
+    result.limitations.append(f"Section denominator: {len(items)} {record_label} after this section's filters. Rates use this subset within each group; averages exclude missing metric values.")
     for condition in spec.filters:
         result.limitations.append(f"Analysis filter: {adapter.fields[condition.field].label} {condition.op} {condition.value}.")
     if spec.ranking_metric:
@@ -183,7 +194,7 @@ def execute_registered_section(spec, rows):
         result.text = "No data available for " + spec.title + "."
         result.metrics[spec.id+".shipments"] = None
     elif not items:
-        result.text = "No matching shipments for " + spec.title + " in the selected data."
+        result.text = f"No matching {record_label} for " + spec.title + " in the selected data."
     def metric_value(group, name):
         if adapter.measures[name].agg == "share":
             return round(100*len(group)/len(items), 1) if items else None
@@ -211,13 +222,13 @@ def execute_registered_section(spec, rows):
             "currency" if adapter.measures[m].value_format == "currency" else "percent" if adapter.measures[m].agg in {"rate", "share"} else "number",
             0 if adapter.measures[m].agg == "count" else 2) for m in spec.metrics]
         result.tables = [make_table(spec.title, columns, records[:spec.limit], total_rows=len(records),
-            table_id="section_"+spec.id, note=f"Denominator: {len(items)} shipments; ranking: {spec.ranking_metric or 'dimensions'}, {spec.direction}. Showing up to {spec.limit} groups; omitted groups are not zero.")]
+            table_id="section_"+spec.id, note=f"Denominator: {len(items)} {record_label}; ranking: {spec.ranking_metric or 'dimensions'}, {spec.direction}. Showing up to {spec.limit} groups; omitted groups are not zero.")]
         for index, row in enumerate(records[:spec.limit]):
             for name, value in zip(spec.metrics, row[len(spec.dimensions):]):
                 result.metrics[f"{spec.id}.group_{index}.{name}"] = value
         partial = sum(any(r.get(d) in (None, "") for d in spec.dimensions) for r in items)
         if partial:
-            result.limitations.append(f"{partial} shipments have partial grouping values, shown as Not available.")
+            result.limitations.append(f"{partial} {record_label} have partial grouping values, shown as Not available.")
     for index, kind in enumerate(spec.charts):
         metric = spec.ranking_metric or spec.metrics[0]
         table = result.tables[0] if result.tables else None
@@ -246,6 +257,9 @@ def verify_registered_section(audit, spec, current, public, rows, dataset):
     from app.charts.fields import get_adapter
     from app.analysis.accuracy import digest
     adapter = get_adapter("shipment")
+    if public['structured_report'].get('scope', {}).get('source') == 'channel_api':
+        from app.analysis.channel_presentation import order_adapter
+        adapter = order_adapter(adapter)
     # Independent filter implementation used by the accuracy module.
     from app.analysis.accuracy import _matches
     items = [r for r in rows if all(_matches(r, f) for f in spec.filters)]
@@ -315,7 +329,8 @@ def verify_registered_section(audit, spec, current, public, rows, dataset):
         for name in spec.metrics:
             if card["key"] == (f"{spec.id}.total.{name}").replace(".", "_"):
                 value = expected_metrics[f"{spec.id}.total.{name}"]
-                valid = value is not None and card["value"] == value and card["label"] == card_label(spec.title, adapter.measures[name].label)
+                from app.analysis.accuracy import number
+                valid = value is not None and number(card['value']) == number(value) and card["label"] == card_label(spec.title, adapter.measures[name].label)
                 audit.add("metric_card_"+spec.id, valid, value, card["value"], spec.id)
     charts = [c for c in public["structured_report"].get("charts", []) if c["id"].startswith("section_"+spec.id+"_")]
     notes = public["structured_report"].get("chart_notes", [])

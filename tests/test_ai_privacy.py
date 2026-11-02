@@ -19,6 +19,12 @@ def messages(text):
     return [{'role': 'user', 'content': text}]
 
 
+@pytest.mark.parametrize('status', ['Shipped', 'Processing', 'Unshipped', 'Fulfilled'])
+def test_channel_order_statuses_remain_in_narrative(status):
+    text = f'Orders by status: Processing has 2 orders and {status} has 1 order.'
+    assert guard.protect(messages(text))[0]['content'] == text
+
+
 def sdk_service(outputs=None):
     calls = []
     outputs = iter(outputs or [(None, {'ok': True})])
@@ -89,37 +95,84 @@ def test_local_name_detector_protects_an_unlabelled_person():
 
 
 @pytest.mark.parametrize('bad', [[], [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': 'https://private.example'}]}],
-    messages('base64 cHJpdmF0ZQ=='), messages('private%40example.com'), messages('A'*200),
-    messages('x'*(privacy.MAX_TEXT+1)), [{'role': 'user', 'content': 'safe', 'name': 'Private Seller'}]])
-def test_uninspectable_inputs_never_reach_provider(bad):
+    [{'role': 'user', 'content': 'safe', 'name': 'Private Seller'}]])
+def test_malformed_messages_never_reach_provider(bad):
     service, calls = sdk_service()
     with pytest.raises(AIPrivacyError):
         asyncio.run(service.generate_json(bad))
     assert calls == []
 
 
-def test_detector_failure_blocks_without_logging_exception_or_raw_input(monkeypatch, caplog):
-    def broken():
-        raise RuntimeError('private@example.com 9876543210')
-    monkeypatch.setattr(privacy, '_name_detector', broken)
+@pytest.mark.parametrize('text, secret', [('Report for private%40example.com', 'private%40example.com'),
+                                          ('Report for ' + 'A' * 200, 'A' * 200)])
+def test_encoded_parts_are_masked_and_the_request_is_still_sent(text, secret):
     service, calls = sdk_service()
-    with pytest.raises(AIPrivacyError) as error:
-        asyncio.run(service.generate_json(messages('seller name: Private Merchant')))
-    assert calls == []
-    assert 'private@example.com' not in caplog.text
-    assert '9876543210' not in caplog.text
-    assert 'Private Merchant' not in caplog.text
-    assert 'private@example.com' not in str(error.value)
+    asyncio.run(service.generate_json(messages(text)))
+    sent = calls[0]['messages'][0]['content']
+    assert secret not in sent and sent.startswith('Report for ')
+
+
+def test_detector_failure_uses_basic_filter_without_logging_raw_input(monkeypatch, caplog):
+    monkeypatch.setattr(privacy, '_local_detector', lambda: None)
+    service, calls = sdk_service()
+    with privacy_context():
+        asyncio.run(service.generate_json(messages('seller name: Private Merchant; call 9876543210')))
+        summary = privacy.privacy_summary()
+    sent = calls[0]['messages'][0]['content']
+    assert 'Private Merchant' not in sent and '9876543210' not in sent
+    assert summary['filters'] == ['basic']
+    assert 'Private Merchant' not in caplog.text and '9876543210' not in caplog.text
     event = json.loads(caplog.records[-1].getMessage())
-    assert event['action'] == 'blocked' and event['audit_id']
+    assert event['action'] == 'sanitized' and event['filter'] == 'basic' and event['audit_id']
+    assert 'basic filter' in privacy.privacy_note(summary)
 
 
-def test_residual_detection_prevents_an_incomplete_sanitizer(monkeypatch):
-    monkeypatch.setattr(privacy.PrivacyGuard, '_plain', lambda self, text, *a, **kw: text)
+def test_final_rescan_catches_what_the_service_missed(monkeypatch):
+    monkeypatch.setattr(privacy, '_service_filter', lambda m, i: (m, {}))
     service, calls = sdk_service()
-    with pytest.raises(AIPrivacyError):
-        asyncio.run(service.generate_json(messages('private@example.com')))
-    assert calls == []
+    asyncio.run(service.generate_json(messages('private@example.com')))
+    assert 'private@example.com' not in str(calls[0]['messages'])
+
+
+def service_transport(handler, monkeypatch):
+    import httpx
+    real = httpx.Client
+    monkeypatch.setenv('PRIVACY_FILTER_SERVICE', 'true')
+    monkeypatch.setenv('AI_BOX_SERVICE_URL', 'http://ai-box.test')
+    monkeypatch.setenv('AI_BOX_SERVICE_TOKEN', 'svc-token')
+    monkeypatch.setattr(privacy.httpx, 'Client', lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+
+
+def test_ai_box_service_filters_and_its_removals_are_recorded(monkeypatch):
+    import httpx
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json={'messages': [{'role': 'user', 'content': '[REDACTED] ke orders dikhao'}],
+                                         'removed': [{'category': 'surname', 'ref': 'abc'}]})
+    service_transport(handler, monkeypatch)
+    service, calls = sdk_service()
+    with privacy_context({'seller_name': 'Indu Enterprises'}):
+        asyncio.run(service.generate_json(messages('Ramesh Kumar ke orders dikhao')))
+        summary = privacy.privacy_summary()
+    assert seen[0].url.path == '/api/privacy/filter'
+    assert seen[0].headers['X-Ai-Box-Service-Token'] == 'svc-token'
+    assert 'Indu Enterprises' in json.loads(seen[0].content)['identities']
+    assert calls[0]['messages'][0]['content'] == '[REDACTED] ke orders dikhao'
+    assert summary == {'counts': {'surname': 1}, 'filters': ['service']}
+
+
+def test_unavailable_service_falls_back_to_the_local_filter(monkeypatch):
+    import httpx
+    service_transport(lambda request: httpx.Response(503), monkeypatch)
+    service, calls = sdk_service()
+    with privacy_context():
+        asyncio.run(service.generate_json(messages('Ramesh Kumar ke orders dikhao')))
+        summary = privacy.privacy_summary()
+    assert 'Ramesh' not in calls[0]['messages'][0]['content']
+    assert summary['filters'] == ['local']
+    assert 'ran locally' in privacy.privacy_note(summary)
 
 
 def test_retry_and_direct_completion_both_enforce_privacy():
@@ -157,7 +210,7 @@ def test_privacy_error_is_not_a_prompt_validation_fallback(monkeypatch):
     from app.models.report_schema import ValidatePromptRequest
     from app.services.prompt_validator_service import PromptValidatorService
     service, calls = sdk_service()
-    monkeypatch.setattr(privacy, '_name_detector', lambda: (_ for _ in ()).throw(RuntimeError('private')))
+    monkeypatch.setattr(privacy.guard, 'protect', lambda m: (_ for _ in ()).throw(AIPrivacyError('blocked')))
     with pytest.raises(AIPrivacyError):
         asyncio.run(PromptValidatorService(service).validate_prompt(ValidatePromptRequest(prompt='Analyze shipments')))
     assert not calls
@@ -167,7 +220,7 @@ def test_http_header_identity_is_masked_and_errors_are_safe(monkeypatch):
     from app.main import app
     from app.api.report_routes import get_prompt_translator_service
     from app.services.prompt_translator_service import PromptTranslatorService
-    service, calls = sdk_service([('stop', {'text': 'शिपमेंट रिपोर्ट बनाओ'})])
+    service, calls = sdk_service([('stop', {'text': 'शिपमेंट रिपोर्ट बनाओ'}), ('stop', {'text': 'शिपमेंट रिपोर्ट बनाओ'})])
     app.dependency_overrides[get_prompt_translator_service] = lambda: PromptTranslatorService(service)
     try:
         with TestClient(app) as client:
@@ -175,12 +228,11 @@ def test_http_header_identity_is_masked_and_errors_are_safe(monkeypatch):
                 json={'text': 'Create report for UnknownSeller QX'})
             assert response.status_code == 200
             assert 'UnknownSeller QX' not in str(calls[0]['messages'])
-            monkeypatch.setattr(privacy, '_name_detector', lambda: (_ for _ in ()).throw(RuntimeError('private@example.com')))
-            blocked = client.post('/api/reports/translate-prompt', json={'text': 'Analyze private@example.com'})
-            assert blocked.status_code == 422
-            assert blocked.json()['error']['code'] == 'ai_privacy_blocked'
-            assert 'private@example.com' not in blocked.text
-            assert len(calls) == 1
+            monkeypatch.setattr(privacy, '_local_detector', lambda: None)
+            filtered = client.post('/api/reports/translate-prompt', json={'text': 'Analyze private@example.com'})
+            assert filtered.status_code == 200
+            assert len(calls) == 2
+            assert 'private@example.com' not in str(calls[1]['messages'])
     finally:
         app.dependency_overrides.pop(get_prompt_translator_service, None)
 
@@ -212,6 +264,43 @@ def test_registered_report_planning_and_narrative_remain_usable():
     assert context['supported_metrics']['orders']['name'] == 'orders'
     assert context['source_scope']['status'] == 'All'
     assert report.company_name == 'Confidential Seller XYZ'  # local document remains usable
+    note = report.content.data_limitations[-1]
+    assert note.startswith('Privacy:') and 'person or business name' in note
+    assert 'Confidential Seller XYZ' not in note
+    assert report.generation['privacy']['counts']
+    if report.validation_token:
+        from app.analysis.accuracy import verify_revision
+        verify_revision(report)  # exports still verify after the note is added
+
+
+def test_hindi_report_with_personal_data_is_generated_with_a_privacy_note():
+    from app.analysis.accuracy import verify_revision
+    from app.models.report_schema import ReportRequest
+    from app.services.report_service import ReportService
+    from tests.test_ordered_reports import PlannedAI, section, shipments
+    planned = PlannedAI([section('courier_performance', ('courier',))])
+    calls = []
+
+    async def create(**kwargs):
+        calls.append(copy.deepcopy(kwargs['messages']))
+        result = await planned.generate_json(kwargs['messages'])
+        return SimpleNamespace(usage=None, choices=[SimpleNamespace(finish_reason='stop',
+            message=SimpleNamespace(content=json.dumps(result)))])
+
+    ai = DeepSeekService()
+    ai._get_client = lambda: SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    prompt = ('चयनित तिथि सीमा में सभी ऑर्डर का स्टेटस ब्रेकडाउन दें, जिसमें प्रत्येक स्टेटस के लिए गिनती और '
+              'प्रतिशत दिखाए जाएं। मेरा नंबर 9876543210 है')
+    req = ReportRequest.model_validate({'report_type': 'shipment', 'prompt': prompt,
+                                        'data': {'orders': shipments()}, 'expected_records': 8})
+    report = asyncio.run(ReportService(ai, config=replace(settings, report_ai_planner=True)).generate_report(req))
+    assert report.records_analyzed == 8
+    assert '9876543210' not in json.dumps(calls, ensure_ascii=False)
+    assert 'चयनित तिथि सीमा' in json.dumps(calls, ensure_ascii=False)
+    note = report.content.data_limitations[-1]
+    assert '1 long number' in note and '9876543210' not in note
+    assert report.structured_report.limitations[-1] == note
+    verify_revision(report)
 
 
 def test_privacy_context_is_isolated_between_concurrent_sellers():
@@ -227,12 +316,26 @@ def test_privacy_context_is_isolated_between_concurrent_sellers():
     assert not privacy._identities.get()
 
 
-@pytest.mark.parametrize('text', ['राहुल शर्मा की shipment report बनाओ', '王小明 shipment report'])
-def test_uncertain_non_latin_names_are_blocked_instead_of_leaked(text):
+@pytest.mark.parametrize('text', [
+    'चयनित तिथि सीमा में सभी ऑर्डर का स्टेटस ब्रेकडाउन दें, जिसमें प्रत्येक स्टेटस के लिए गिनती और प्रतिशत दिखाए जाएं।',
+    'पिछले हफ्ते के सभी ऑर्डर का स्टेटस बताओ', 'दिल्ली में कितने शिपमेंट वापस आए',
+    'कूरियर के हिसाब से डिलीवरी समय की तुलना करें',
+    'pichle 7 din ke sabhi orders ka status breakdown do, har status ka count aur percentage dikhao',
+    'Delhi wale RTO shipments ki list banao aur courier wise compare karo',
+])
+def test_hindi_and_hinglish_questions_reach_the_model_unchanged(text):
     service, calls = sdk_service()
-    with pytest.raises(AIPrivacyError):
-        asyncio.run(service.generate_json(messages(text)))
-    assert not calls
+    asyncio.run(service.generate_json(messages(text)))
+    assert calls[0]['messages'][0]['content'] == text
+
+
+@pytest.mark.parametrize('text, secret', [('राहुल शर्मा की shipment report बनाओ', 'राहुल'),
+                                          ('Ramesh Kumar ke orders dikhao', 'Ramesh'),
+                                          ('Mr. Anil ke saare COD orders', 'Anil')])
+def test_hindi_and_hinglish_names_are_masked_not_blocked(text, secret):
+    service, calls = sdk_service()
+    asyncio.run(service.generate_json(messages(text)))
+    assert secret not in calls[0]['messages'][0]['content']
 
 
 @pytest.mark.parametrize('text', ['शिपमेंट रिपोर्ट बनाओ', 'पिछले 30 दिनों की डिलीवरी रिपोर्ट दिखाओ',
@@ -267,7 +370,7 @@ def test_suggestion_workflow_uses_guard_and_does_not_swallow_privacy_failure(mon
 
     assert len(asyncio.run(suggest())) == 3
     assert 'private@example.com' not in str(calls[0]['messages'])
-    monkeypatch.setattr(privacy, '_name_detector', lambda: (_ for _ in ()).throw(RuntimeError('private')))
+    monkeypatch.setattr(privacy.guard, 'protect', lambda m: (_ for _ in ()).throw(AIPrivacyError('blocked')))
     with pytest.raises(AIPrivacyError):
         asyncio.run(suggest())
     assert len(calls) == 1

@@ -1,5 +1,56 @@
 # Structured report API (version 2)
 
+## Attachment reports
+
+Upload files with `POST /api/attachments` (multipart field `file`, authenticated `X-User-Id`).
+The main backend forwards files to `Ai_Box_Service` using its private service token; a Bigship
+credential is not required to upload or analyze attachment-only data. Input formats and limits
+are exposed by `GET /api/attachments/capabilities`. `DELETE /api/attachments/{id}` removes an upload.
+
+`POST /api/reports/generate` also accepts:
+
+```json
+{
+  "report_type": "shipment",
+  "source": "attachment",
+  "attachment_ids": ["<32-character upload ID>"],
+  "prompt": "Use only the attached Excel data; count orders by status and total the amount",
+  "external_source": "channel_api",
+  "filters": {"channel_id": 2, "from_date": "2026-10-24", "to_date": "2026-10-30"}
+}
+```
+
+Files are locally inspected first. For unread visual attachments, DeepSeek first selects file roles;
+only needed images go to the vision model, then context is refreshed. Unused images are not sent.
+DeepSeek receives the user prompt, attachment schema/context,
+selected controls and the runtime attachment skill through the existing text privacy boundary.
+Request-local `file_a`/`file_b` aliases keep real upload IDs out of model requests and prevent
+accidental identifier redaction. Real IDs are restored on the server after model dispatch.
+The validated source decision controls subsequent data access: `attachment_only` never fetches
+shipment/channel records; `api_only` uses attachments as references; `combined` uses both;
+`clarification_required` stops before any external data fetch. Selected UI controls do not
+automatically filter attachment data. The browser suppresses preview counts while files are attached.
+
+For attachments, the service executes bounded typed Python aggregations (count, sum, average,
+minimum, maximum, distinct count, share), filters, grouping and sorting over complete selected
+table ranges. It does not execute generated code or formulas. Exact source excerpts support
+document reports. Native PDF tables and DOCX tables can be analyzed; scanned/image tables use
+configured DeepSeek vision. Formula caches must be present for selected numeric formula columns.
+
+Attachment-data reports return `report_type=attachment`, source metadata and a signed revision.
+PDF/DOCX/PPTX/XLSX exports preserve the signed figures; changing them causes a revision error.
+`POST /api/reports/export/xlsx` and `format=xlsx` on download routes export typed spreadsheet values.
+
+When the AI maps original template placeholders/cells to calculated result cells, generation
+metadata includes `template_exports`. `GET /api/reports/{report_id}/template/{attachment_id}`
+requires the report access token or an owner-scoped saved report, and returns the filled original
+DOCX/XLSX/PPTX template. Original uploads are not overwritten. Source uploads expire after the
+service TTL, so later reanalysis/template exports may require reuploading. Arbitrary layout
+reconstruction, legacy Office conversion, formula evaluation and exact PDF design reproduction
+are not part of this endpoint. Direct image understanding uses the separately configured vision
+model; the primary text report model remains unchanged.
+
+
 Seller generation tracking is saved privately in `output/report_generation_audit.jsonl`
 (5 MB rotation, five backups). Each generation attempt that enters the report service records
 the full prompt, seller/user ID from `X-User-Id`, customer ID, company name, report/request IDs,

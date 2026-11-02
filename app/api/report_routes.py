@@ -6,11 +6,14 @@ import asyncio
 import logging
 import time
 from functools import lru_cache
+from typing import Literal
 
-from fastapi import APIRouter, Depends, Header, Query
+from pydantic import BaseModel, Field, model_validator
+
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, Query
 from fastapi.responses import Response
 
-from app.api.auth import CurrentUser, get_optional_user, get_user_reports
+from app.api.auth import CurrentUser, get_current_user, get_optional_user, get_user_reports
 from app.config import settings
 from app.errors import ReportDeadlineError
 from app.models.report_schema import (
@@ -26,6 +29,7 @@ from app.models.report_schema import (
     ValidatePromptRequest,
     ValidatePromptResponse,
 )
+from app.services import report_memory
 from app.services.deepseek_service import DeepSeekService
 from app.services.prompt_translator_service import PromptTranslatorService
 from app.services.prompt_validator_service import PromptValidatorService
@@ -35,6 +39,17 @@ from fastapi import HTTPException
 
 router = APIRouter(prefix="/api/reports", tags=["Reports"])
 logger = logging.getLogger("ai_box")
+XLSX_MEDIA_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
+
+class PresentationEditRequest(BaseModel):
+    report: ReportResponse
+    theme_id: str | None = None
+    accent: str | None = None
+    background: str | None = None
+    text_color: str | None = None
+    prompt: str = Field(default='', max_length=2000)
+
 
 _VALIDATION_ERRORS = {
     400: {"model": ErrorResponse, "description": "Unsupported report type"},
@@ -46,6 +61,17 @@ _VALIDATION_ERRORS = {
 @lru_cache
 def get_report_service() -> ReportService:
     return ReportService(DeepSeekService())
+
+
+@router.post('/presentation/edit', response_model=ReportResponse)
+def edit_presentation(body: PresentationEditRequest, response: Response,
+                      user: CurrentUser = Depends(get_current_user), service: ReportService = Depends(get_report_service)):
+    from app.services.presentation_edits import edit
+    report = edit(body.report, theme_id=body.theme_id, accent=body.accent,
+                  background=body.background, text_color=body.text_color, prompt=body.prompt)
+    response.headers['X-Report-Access-Token'] = service.store_report(report)
+    response.headers['Cache-Control'] = 'no-store'
+    return report
 
 
 @lru_cache
@@ -116,11 +142,11 @@ async def generate_report(
     service: ReportService = Depends(get_report_service),
     user: CurrentUser | None = Depends(get_optional_user),
     x_shipment_authorization: str | None = Header(default=None, alias="X-Shipment-Authorization", description=(
-        "source=shipment_api only: 'Bearer <BigShip login token>'. Forwarded unchanged as Authorization to the "
-        "configured shipment API only; never logged, stored or sent to the AI model.")),
+        "source=shipment_api / channel_api only: 'Bearer <BigShip login token>'. Forwarded unchanged to the "
+        "configured shipment API or Ai_Box_Service only; never logged, stored or sent to the AI model.")),
 ) -> ReportResponse:
     started = time.monotonic()
-    if request.source == "shipment_api" and user is None:
+    if (request.source in ("shipment_api", "channel_api", "attachment") or request.attachment_ids) and user is None:
         # AI Box login first; the shipment credential is checked separately (shipment_auth_required).
         raise HTTPException(status_code=401, detail="AI Box login is required: the X-User-Id header is missing.")
     logger.info("generate_report: report_type=%s source=%s prompt_chars=%s", request.report_type, request.source,
@@ -190,9 +216,29 @@ def preview_pptx(document: ReportDocument, response: Response,
 def _export_format(service, document, format):
     exporter, media = {"pdf": (service.export_pdf, PDF_MEDIA_TYPE),
                        "docx": (service.export_docx, DOCX_MEDIA_TYPE),
-                       "pptx": (service.export_pptx, PPTX_MEDIA_TYPE)}[format]
+                       "pptx": (service.export_pptx, PPTX_MEDIA_TYPE),
+                       'xlsx': (service.export_xlsx, XLSX_MEDIA_TYPE)}[format]
     content, filename = exporter(document)
     return _file_response(content, filename, media)
+
+
+@router.post('/export/xlsx')
+def export_xlsx(document: ReportDocument, service: ReportService = Depends(get_report_service)):
+    return _export_format(service, document, 'xlsx')
+
+
+@router.get('/{report_id}/template/{attachment_id}')
+async def export_attachment_template(report_id: str, attachment_id: str,
+    authorization: str | None = Header(default=None), user: CurrentUser = Depends(get_current_user),
+    service: ReportService = Depends(get_report_service)):
+    from app.api.attachment_routes import get_attachment_client, identifier
+    report = service.get_report(report_id, authorization, owner_id=user.id)
+    edits = (report.generation or {}).get('template_exports', {}).get(identifier(attachment_id))
+    if not edits:
+        raise HTTPException(404, 'This report has no mapped editable template')
+    upstream = await get_attachment_client().request('POST', '/' + attachment_id + '/render', user.id, body=edits, binary=True)
+    return Response(upstream.content, media_type=upstream.headers.get('Content-Type'),
+        headers={'Content-Disposition': upstream.headers.get('Content-Disposition', 'attachment'), 'Cache-Control': 'no-store'})
 
 
 @router.get("/overview", summary="Get real-time AI Box dashboard analytics overview")
@@ -203,9 +249,11 @@ def get_overview(reports: UserReports = Depends(get_user_reports)) -> dict:
 @router.post("/save", summary="Save generated report to database and generate export documents")
 def save_report(
     req: SaveReportRequest,
+    background: BackgroundTasks,
     reports: UserReports = Depends(get_user_reports),
     service: ReportService = Depends(get_report_service),
 ) -> dict:
+    background.add_task(report_memory.send_feedback, req.report_id, "saved")
     report_dict = req.report
     if not report_dict:
         try:
@@ -287,12 +335,12 @@ def delete_saved_report(report_id: str, reports: UserReports = Depends(get_user_
 @router.get("/saved/{report_id}/download", summary="Download PDF, DOCX or PPTX file of a saved report")
 def download_saved_file(
     report_id: str,
-    format: str = Query("pdf", pattern="^(pdf|docx|pptx)$"),
+    format: str = Query("pdf", pattern="^(pdf|docx|pptx|xlsx)$"),
     reports: UserReports = Depends(get_user_reports),
     service: ReportService = Depends(get_report_service),
 ) -> Response:
     # PPTX is rendered on demand from the owner-scoped saved report JSON.
-    content, filename = (None, "") if format == "pptx" else reports.file(report_id, format)
+    content, filename = (None, "") if format in ('pptx', 'xlsx') else reports.file(report_id, format)
     if not content:
         record = reports.get(report_id)
         if not record or not record.get("report"):
@@ -309,8 +357,34 @@ def get_report(report_id: str, authorization: str | None = Header(default=None),
 
 
 @router.get("/{report_id}/download")
-def download_report(report_id: str, format: str = Query(pattern="^(pdf|docx|pptx)$"),
+def download_report(report_id: str, background: BackgroundTasks, format: str = Query(pattern="^(pdf|docx|pptx|xlsx)$"),
                     authorization: str | None = Header(default=None), user: CurrentUser | None = Depends(get_optional_user),
                     service: ReportService = Depends(get_report_service)):
     report = service.get_report(report_id, authorization, owner_id=user.id if user else None)
-    return _export_format(service, report, format)
+    response = _export_format(service, report, format)
+    background.add_task(report_memory.send_feedback, report_id, "exported")
+    return response
+
+
+class ReportFeedback(BaseModel):
+    """Exactly one of ``rating`` (stars asked when the user leaves the report) or ``signal``."""
+    rating: int | None = Field(default=None, ge=1, le=5, description="1-5 stars; a new rating replaces the previous one.")
+    signal: Literal["up", "down", "shared", "rerun"] | None = Field(
+        default=None, description="up/down: the user liked or disliked the report; shared; rerun: 'Run again' was used.")
+
+    @model_validator(mode="after")
+    def _one(self):
+        if (self.rating is None) == (self.signal is None):
+            raise ValueError("Send either rating (1-5) or signal")
+        return self
+
+
+@router.post("/{report_id}/feedback", status_code=202,
+             summary="Rate a report (1-5 stars) or tell report memory it was liked, disliked, shared or run again")
+def report_feedback(report_id: str, body: ReportFeedback, background: BackgroundTasks,
+                    authorization: str | None = Header(default=None), user: CurrentUser = Depends(get_current_user),
+                    service: ReportService = Depends(get_report_service)) -> dict:
+    service.get_report(report_id, authorization, owner_id=user.id)  # only the owner's reports
+    signal = f"rating:{body.rating}" if body.rating else body.signal
+    background.add_task(report_memory.send_feedback, report_id, signal)
+    return {"accepted": True}

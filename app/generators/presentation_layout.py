@@ -22,31 +22,35 @@ INK, MUTED, ACCENT, LIGHT, WHITE = '#152D43', '#607184', '#4F46E5', '#EEF1F7', '
 _CHART_LOCK=threading.Lock()
 
 
-def presentation_chart(chart):
+def presentation_chart(chart, theme=None):
     """Use large slide-scale labels for simple charts; retain the report renderer
     and stored type for advanced charts or large category sets."""
     kind=chart.type
     if (len(chart.datasets)!=1 or len(chart.labels)>6 or kind not in {'bar','pie','doughnut','donut'}
             or chart.options.get('horizontal')):
-        return render_png(chart)
+        return render_png(chart, palette=[theme['accent'], '#16A34A', '#F59E0B', '#EF4444', '#8B5CF6'] if theme else None,
+                          background=theme['background'] if theme else None, ink=theme['ink'] if theme else None)
     values=chart.datasets[0].data
     if not any(values): return render_png(chart)
     from matplotlib.figure import Figure
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.ticker import MaxNLocator
     with _CHART_LOCK:
-        fig=Figure(figsize=(7.5,5),dpi=160,facecolor='white');FigureCanvasAgg(fig)
+        background = theme['background'] if theme else 'white'
+        ink = theme['ink'] if theme else INK
+        fig=Figure(figsize=(7.5,5),dpi=160,facecolor=background);FigureCanvasAgg(fig)
         palette=['#5B5FE9','#16A34A','#F59E0B','#EF4444','#3B82F6','#8B5CF6']
+        if theme: palette[0] = theme['accent']
         if kind=='bar':
             ax=fig.add_axes([.12,.23,.85,.68]);ax.set_axisbelow(True)
             ax.grid(axis='y',color='#E6EAF0',linewidth=.8)
             bars=ax.bar(range(len(values)),values,color=palette[0],width=.58)
-            ax.set_xticks(range(len(values)),['\n'.join(textwrap.wrap(label,13)) for label in chart.labels],fontsize=19,color='#334155')
+            ax.set_xticks(range(len(values)),['\n'.join(textwrap.wrap(label,13)) for label in chart.labels],fontsize=19,color=ink)
             ax.tick_params(axis='y',labelsize=17,colors='#64748B',length=0)
             if all(float(v).is_integer() for v in values): ax.yaxis.set_major_locator(MaxNLocator(integer=True))
             ax.set_ylim(0,max(values)*1.23)
             for bar,value in zip(bars,values):
-                ax.text(bar.get_x()+bar.get_width()/2,value+max(values)*.035,f'{value:g}',ha='center',fontsize=25,fontweight='bold',color=INK)
+                ax.text(bar.get_x()+bar.get_width()/2,value+max(values)*.035,f'{value:g}',ha='center',fontsize=25,fontweight='bold',color=ink)
             for side in ('top','right','left'): ax.spines[side].set_visible(False)
             ax.spines['bottom'].set_color('#CBD5E1')
         else:
@@ -58,7 +62,8 @@ def presentation_chart(chart):
                 textprops={'fontsize':22,'fontweight':'bold','color':'white'},wedgeprops=wedge)
             fig.legend(wedges,chart.labels,loc='lower center',bbox_to_anchor=(.5,.015),frameon=False,
                        fontsize=20,ncol=1,handlelength=1,handletextpad=.6)
-        output=BytesIO();fig.savefig(output,format='png',facecolor='white')
+        ax.set_facecolor(background)
+        output=BytesIO();fig.savefig(output,format='png',facecolor=background)
         return output.getvalue()
 
 
@@ -196,6 +201,8 @@ def _table_covers_chart(table, columns, rows):
 
 def build_slides(report):
     report=ReportDocument.model_validate(report.model_dump())
+    from app.generators.presentation_themes import theme_for
+    theme = theme_for(report)
     sr, content = report.structured_report, report.content
     title=sr.title if sr else content.title
     company=report.company_name or (sr.company_name if sr else None) or 'AI Box'
@@ -248,7 +255,7 @@ def build_slides(report):
         pair=charts[offset:offset+2]
         s=new_slide(pair[0].title if len(pair)==1 else 'Shipment Overview' if report.report_type=='shipment' else 'Report Overview',company,len(slides)+1)
         for index,chart in enumerate(pair):
-            png=presentation_chart(chart)
+            png=presentation_chart(chart, theme)
             if not png:
                 from app.models.report_schema import ReportTable
                 cols,rows=chart_table(chart)
@@ -302,10 +309,21 @@ def build_slides(report):
         for item in s['items']:
             if item['kind']=='text' and item['x']==1470 and item['y']==847:
                 item['lines']=[f'{index:02d}']
+    for slide in slides:
+        slide['theme'] = theme
+        slide['items'].insert(0, dict(kind='rect', x=0, y=0, w=W, h=H, fill=theme['background']))
+        for item in slide['items'][1:]:
+            if item['kind'] == 'text':
+                item['font'] = theme['font']
+                item['color'] = ({INK: theme['ink'], MUTED: theme['muted']}.get(item['color'], item['color'])
+                                 if slide['kind'] != 'cover' else theme['cover_text'])
+            elif item['kind'] == 'rect':
+                item['fill'] = theme['cover'] if slide['kind'] == 'cover' and item['w'] == W else theme['accent'] if item['fill'] in {ACCENT, '#A5B4FC'} else item['fill']
     return slides
 
 
 def slide_svg(slide):
+    theme = slide.get('theme') or dict(ink=INK, light=LIGHT, background=WHITE)
     out=[f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}">',f'<rect width="{W}" height="{H}" fill="white"/>']
     def texts(lines,x,y,size,color,bold=False,leading=None):
         for index,line in enumerate(lines):
@@ -316,16 +334,16 @@ def slide_svg(slide):
         elif k=='text': texts(item['lines'],x,y,item['size'],item['color'],item['bold'],item['leading'])
         elif k=='image': out.append(f'<image x="{x}" y="{y}" width="{w}" height="{h}" href="data:image/png;base64,{item["data"]}"/>')
         elif k=='table':
-            out.append(f'<rect x="{x}" y="{y}" width="{w}" height="{item["header_h"]}" fill="{INK}"/>')
+            out.append(f'<rect x="{x}" y="{y}" width="{w}" height="{item["header_h"]}" fill="{theme["ink"]}"/>')
             xx=x
             for lines,cw in zip(item['header_lines'],item['col_widths']):
-                texts(lines,xx+16,y+12,item['size'],WHITE,True); xx+=cw
+                texts(lines,xx+16,y+12,item['size'],theme['background'],True); xx+=cw
             yy=y+item['header_h']
             for index,row in enumerate(item['rows']):
-                out.append(f'<rect x="{x}" y="{yy}" width="{w}" height="{row["height"]}" fill="{LIGHT if index%2==0 else WHITE}"/>')
+                out.append(f'<rect x="{x}" y="{yy}" width="{w}" height="{row["height"]}" fill="{theme["light"] if index%2==0 else theme["background"]}"/>')
                 xx=x
                 for lines,cw in zip(row['lines'],item['col_widths']):
-                    texts(lines,xx+16,yy+10,item['size'],INK); xx+=cw
+                    texts(lines,xx+16,yy+10,item['size'],theme['ink']); xx+=cw
                 yy+=row['height']
     out.append('</svg>')
     return ''.join(out)

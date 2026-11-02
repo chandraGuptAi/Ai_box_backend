@@ -107,6 +107,16 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
         "customeraddresscity", "consigneedetailscity", "customerdetailscity",
     ),
     "zone": ("zone", "shippingzone", "deliveryzone"),
+    # Bigship "lane" is "<origin zone>-<destination zone>", e.g. "A-A", "N1-E2", "West 1-South 2".
+    "lane": ("lane", "shippinglane", "zonelane"),
+    # Ai_Box_Service splits the lane; rows sent in the request (payload mode) are split here instead.
+    "origin_zone": ("originzone", "pickupzone", "sourcezone"),
+    "destination_zone": ("destinationzone", "deliveryzone"),
+    # Pickup side: the consignor is the seller's own pickup location, not a person to protect.
+    "origin_pincode": ("consignorpin", "consignorpincode", "pickuppincode", "pickuppin", "originpincode",
+                       "pickupaddresspincode", "warehousepincode"),
+    "origin_city": ("consignorcity", "pickupcity", "origincity", "pickupaddresscity", "warehousecity"),
+    "origin_state": ("consignorstate", "pickupstate", "originstate", "pickupaddressstate", "warehousestate"),
     "order_date": (
         "orderdate", "createdat", "createddate", "orderedon", "ordercreateddate", "ordercreatedat",
         "bookingdate", "orderdatetime", "createdon",
@@ -392,16 +402,32 @@ def manifest_calendar_day(record, timezone_name="Asia/Kolkata"):
     return next(iter(days)) if len(days) == 1 else None
 
 
+def lane_zones(lane: Any) -> tuple[str | None, str | None]:
+    """("N1", "E2") from lane "N1-E2"; (None, None) when the lane is not "<origin>-<destination>"."""
+    match = re.fullmatch(r"\s*([^-]+?)\s*-\s*([^-]+?)\s*", str(lane or ""))
+    return (match[1], match[2]) if match else (None, None)
+
+
 def extended_shipment_fields(record: dict[str, Any]) -> dict[str, Any]:
     """Opaque consignee keys keep personal names/addresses out of AI context and logs."""
     flat = _flatten(record)
     identifier = next((flat[k] for k in ("consigneecustomerid", "consigneebuyerid", "consigneeid", "buyerid")
                        if flat.get(k) not in (None, "")), None)
-    name = next((flat[k] for k in ("consigneename", "consigneecustomername", "buyername")
+    name = next((flat[k] for k in ("consigneename", "consigneecustomername", "buyername", "consigneecompanyname")
                  if flat.get(k) not in (None, "")), None)
     pin = _lookup(flat, "destination_pincode")
     from app.pincodes import normalize_pincode
     pin = normalize_pincode(pin)
+    lane = scrub_text(_lookup(flat, "lane"), 40)
+    split = lane_zones(lane)
+    origin_zone = scrub_text(_lookup(flat, "origin_zone"), 30) or split[0]
+    destination_zone = scrub_text(_lookup(flat, "destination_zone"), 30) or split[1]
+    route = {"lane": lane, "origin_zone": origin_zone,
+             # An explicit zone wins; otherwise the lane's destination zone answers "zone-wise" questions.
+             "zone": scrub_text(_lookup(flat, "zone"), 30) or destination_zone,
+             "origin_pincode": normalize_pincode(_lookup(flat, "origin_pincode")),
+             "origin_city": scrub_text(_lookup(flat, "origin_city"), 60),
+             "origin_state": scrub_text(_lookup(flat, "origin_state"), 60)}
     basis = "established consignee identifier" if identifier is not None else "approximate name/city/pincode grouping" if name else "unavailable"
     key = ("id", str(identifier)) if identifier is not None else (
         "approximate", str(name).casefold().strip(), str(_lookup(flat, "destination_city") or "").casefold(), pin) if name else None
@@ -411,7 +437,7 @@ def extended_shipment_fields(record: dict[str, Any]) -> dict[str, Any]:
     stage = "pending" if status in {"rto pending", "rto initiated", "rto in transit", "rto intransit"} else (
         "completed" if status in {"rto delivered", "returned", "returned to origin"} else
         "unknown" if categorize_status(status) == "rto" else "not_rto" if categorize_status(status) not in {"unknown", "other"} else None)
-    return {"buyer": buyer, "buyer_identity_basis": basis, "destination_pincode": pin, "rto_stage": stage}
+    return {"buyer": buyer, "buyer_identity_basis": basis, "destination_pincode": pin, "rto_stage": stage, **route}
 
 
 @dataclass
@@ -489,7 +515,8 @@ def parse_order(record: dict[str, Any]) -> ShipmentOrder:
         cancellation_reason=scrub_text(_lookup(flat, "cancellation_reason"), 160),
         destination_state=scrub_text(_lookup(flat, "destination_state"), 60),
         destination_city=scrub_text(_lookup(flat, "destination_city"), 60),
-        zone=scrub_text(_lookup(flat, "zone"), 30),
+        zone=(scrub_text(_lookup(flat, "zone"), 30) or scrub_text(_lookup(flat, "destination_zone"), 30)
+              or lane_zones(scrub_text(_lookup(flat, "lane"), 40))[1]),
         order_date=parse_date(_lookup(flat, "order_date")),
         order_value=parse_number(_lookup(flat, "order_value")),
         weight=parse_number(_lookup(flat, "weight")),

@@ -262,7 +262,7 @@ def generate_pdf(report: ReportDocument) -> bytes:
     meta_parts.extend([
         f"<b>Generated:</b> {report.generated_at.strftime('%d %b %Y, %H:%M UTC')}",
         f"<b>Records:</b> {report.records_analyzed:,}",
-        f"<b>Scope:</b> Supplied report data",
+        f"<b>Scope:</b> {escape(str(structured.scope.get('source_label') or 'Supplied report data')) if structured else 'Supplied report data'}",
     ])
     story.append(Paragraph(" &nbsp;&nbsp;·&nbsp;&nbsp; ".join(meta_parts), styles["meta"]))
     story.append(Spacer(1, 3 * mm))

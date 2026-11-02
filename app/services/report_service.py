@@ -28,10 +28,11 @@ from app.analysis.completeness import SelectedFilters, check_source, selected_fi
 from app.analysis.accuracy import DatasetSnapshot, validate_final, verify_revision, seal, digest, immutable_data
 from app.errors import NoMatchingRecordsError, AIPrivacyError
 from app.services.shipment_source import ShipmentSource, build_query, delegated_credential
+from app.services.channel_source import ChannelSource
 from app.analysis.interpreter import report_title
 from app.config import BASE_DIR, Settings, settings
 from app.errors import (AIResponseError, AppError, ClarificationRequiredError, ReportExportError, request_id_var, report_id_var,
-                        InvalidReportDataError, InvalidPromptError, UnsupportedRequestError)
+                        InvalidReportDataError, InvalidPromptError, ReportAccuracyError, UnsupportedRequestError)
 from app.skills.prompt_skill import prompt_skill
 from app.generators.docx_generator import generate_docx
 from app.generators.pdf_generator import generate_pdf
@@ -333,13 +334,36 @@ def _plan_guidance(plan, scope, vocab, adapter, source_text=""):
     return text
 
 
+def _with_privacy_note(report: ReportResponse) -> ReportResponse:
+    """Tell the reader what personal data was kept from the AI, at the end of Data limitations.
+
+    A sealed report is re-sealed for the same dataset so its exports still verify."""
+    from app.security.privacy import privacy_note, privacy_summary
+    summary = privacy_summary()
+    note = privacy_note(summary)
+    if not summary["counts"] and not note:
+        return report
+    receipt = verify_revision(report) if report.validation_token else None
+    report.generation = {**(report.generation or {}), "privacy": summary}
+    if note:
+        report.content.data_limitations = [*report.content.data_limitations[:14], note]
+        if report.structured_report:
+            report.structured_report.limitations = [*report.structured_report.limitations, note]
+    if receipt:
+        from types import SimpleNamespace
+        seal(report, SimpleNamespace(fingerprint=receipt["dataset"], request_id=receipt["request_id"]))
+    return report
+
+
 class ReportService:
     def __init__(self, ai_service: DeepSeekService, config: Settings = settings,
-                 source: ShipmentSource | None = None) -> None:
+                 source: ShipmentSource | None = None, channel_source: ChannelSource | None = None) -> None:
         self._ai = ai_service
         self._settings = config
         self._prompt_skill = prompt_skill
-        self._source = source or ShipmentSource(config)
+        from app.services.ai_box_shipments import default_shipment_source
+        self._source = source or default_shipment_source(config)
+        self._channel_source = channel_source or ChannelSource()
 
     def list_report_types(self) -> list[ReportTypeInfo]:
         return [
@@ -506,14 +530,26 @@ class ReportService:
         outcome, error_code = "cancelled", None
         error_details = {}
         from app.security.privacy import privacy_context
+        from app.services import report_memory
         privacy = privacy_context(request.model_dump(mode="json"), {"seller_id": user_id,
                                   "access_token": shipment_credential})
+        report_memory.reset()
         try:
             with privacy:
                 report = await self._generate_report(request, shipment_credential=shipment_credential, user_id=user_id)
+                if request.presentation_theme:
+                    from app.services.presentation_edits import edit
+                    report = edit(report, theme_id=request.presentation_theme, mark_edit=False)
+                report = _with_privacy_note(report)
             outcome = "generated"
+            await report_memory.record_outcome(report.report_id, "generated")
             return report
         except Exception as exc:
+            # Only failures caused by the plan itself teach memory; source/network errors say nothing about it.
+            if isinstance(exc, (ClarificationRequiredError, ReportAccuracyError)):
+                await report_memory.record_outcome(
+                    None, "clarification" if isinstance(exc, ClarificationRequiredError) else "failed")
+            report_memory.reset()
             outcome = "failed"
             error_code = exc.code if isinstance(exc, AppError) else (
                 f"http_{exc.status_code}" if isinstance(exc, HTTPException) else "internal_error")
@@ -539,6 +575,7 @@ class ReportService:
                     "previous_report_id": (request.previous_report or {}).get("report_id"),
                     "records_analyzed": report.records_analyzed if report else None,
                     "ai_calls": (report.generation or {}).get("ai_calls") if report else None,
+                    "privacy_filtered": (report.generation or {}).get("privacy") if report else None,
                 })
             finally:
                 report_id_var.reset(report_token)
@@ -548,6 +585,14 @@ class ReportService:
                                user_id: str | None = None) -> ReportResponse:
         """``shipment_credential``: the caller's delegated shipment-service bearer token (shipment_api mode only).
         ``user_id``: the AI Box user, recorded in the coverage audit log only."""
+        if (request.previous_report
+                and not re.search(r'\b(remove|delete|hata\w*|compare|analy[sz]e|calculate|filter|fetch)\b', request.prompt or '', re.I)
+                and re.search(r'\b(theme|style|colou?r|background)\b|\b(add|include|draw|insert|lagao|jodo)\b.*\b(chart|graph)\b|\b(chart|graph)\b.*\b(add|lagao|jodo)\b', request.prompt or '', re.I)):
+            from app.services.presentation_edits import edit
+            return edit(request.previous_report, prompt=request.prompt)
+        if request.attachment_ids:
+            from app.services.attachment_reports import AttachmentReports
+            return await AttachmentReports(self._ai).generate(request, self, user_id, shipment_credential)
         definition = get_report_definition(request.report_type)
 
         # A follow-up that removes or re-types specific charts patches the current report; it is
@@ -574,6 +619,8 @@ class ReportService:
             if request.source == "shipment_api":
                 delegated_credential(shipment_credential)
                 build_query(request.filters, self._settings)
+            elif request.source == "channel_api":
+                delegated_credential(shipment_credential)
             approved_plan = await plan_request_before_fetch(self._ai, request,
                 digest(f"{user_id or 'payload'}:{digest(shipment_credential or '')}")[:20])
 
@@ -610,6 +657,8 @@ class ReportService:
                 if approved_plan is not None:
                     request, approved_plan, upstream_analysis_filters, authorized_source_scope = self._push_source_dates(request, approved_plan)
                 request, source, selected = await self._fetch_source(request, shipment_credential)
+            elif request.source == "channel_api":
+                request, source, selected = await self._fetch_channel_source(request, shipment_credential)
             elif definition.report_type == "shipment":
                 selected = selected_filters(request.filters, request.data)
                 data_in = with_report_filter(request.data, selected) if request.filters else request.data
@@ -1064,8 +1113,9 @@ class ReportService:
                     query.date_filter_type, query.timezone, request.filters.from_date, request.filters.to_date,
                     (request.filters.to_date - request.filters.from_date).days + 1, query.from_date, query.to_date)
         result = await self._source.fetch(query, delegated_credential(credential))
-        from app.security.privacy import register_source_identities
+        from app.security.privacy import record_source_removals, register_source_identities
         register_source_identities(result.rows)
+        record_source_removals(result.removed_fields)
         filters = request.filters
         selected = SelectedFilters(from_date=filters.from_date, to_date=filters.to_date, status_label=query.status_label,
                                    date_field=filters.date_field, timezone=filters.timezone, pincodes=tuple(filters.pincodes))
@@ -1077,6 +1127,29 @@ class ReportService:
         # as_of above is today's date for ages and relative periods, not a source snapshot.
         info = {**result.source_info(), "data_as_of": None, "reference_date": today}
         source = await run_in_threadpool(check_source, data, selected, expected_records=result.total,
+                                         allow_partial=request.allow_partial, enforce=True, rows_reconciled=True,
+                                         source_owned=True, source_info=info)
+        return request.model_copy(update={"data": source.data}), source, selected
+
+    async def _fetch_channel_source(self, request: ReportRequest, credential: str | None):
+        """Fetch one sales channel's store orders for the selected days from Ai_Box_Service (server to server)
+        and pass them through the same completeness gate as fetched shipments."""
+        filters = request.filters
+        result = await self._channel_source.fetch(filters.channel_id, filters.from_date, filters.to_date,
+                                                  delegated_credential(credential))
+        # Store orders carry no order_id/awb; the unique channel_order_id identifies them for de-duplication.
+        rows = [{**row, "order_id": str(row.get("channel_order_id"))} for row in result.rows]
+        from app.security.privacy import register_source_identities
+        register_source_identities(rows)
+        logger.info("Channel orders: request_id=%s report_id=%s channel_id=%s selected=%s..%s rows=%s",
+                    request_id_var.get(), report_id_var.get(), filters.channel_id, filters.from_date,
+                    filters.to_date, len(rows))
+        selected = SelectedFilters(from_date=filters.from_date, to_date=filters.to_date, status_label=None,
+                                   date_field="order_date", timezone=filters.timezone, pincodes=tuple(filters.pincodes))
+        today = datetime.now(ZoneInfo(filters.timezone)).date().isoformat()
+        data = with_report_filter({"getOrderList": {"data": rows, "total": len(rows)}, "as_of": today}, selected)
+        info = {"source": "channel_api", "channel_id": filters.channel_id, "data_as_of": None, "reference_date": today}
+        source = await run_in_threadpool(check_source, data, selected, expected_records=len(rows),
                                          allow_partial=request.allow_partial, enforce=True, rows_reconciled=True,
                                          source_owned=True, source_info=info)
         return request.model_copy(update={"data": source.data}), source, selected
@@ -1119,7 +1192,15 @@ class ReportService:
         """Render the approved AnalysisPlan sections; generic templates never enter this path."""
         from app.analysis.executor import execute_ordered_sections
         from app.analysis.section_reports import narrative_messages, grounded_text, verify_section_coverage, section_title, card_label
-        datasets = await run_in_threadpool(execute_ordered_sections, plan, rows)
+        channel_orders = request.source == 'channel_api'
+        if channel_orders:
+            from app.analysis.channel_presentation import order_adapter, order_plan
+            adapter = order_adapter(adapter)
+            plan = order_plan(plan)
+            scope = {**scope, 'source': 'channel_api', 'channel_id': request.filters.channel_id,
+                     'source_label': f'Channel orders (channel {request.filters.channel_id})', 'record_type': 'orders'}
+        datasets = await run_in_threadpool(execute_ordered_sections, plan, rows, adapter=adapter,
+                                           record_label='orders' if channel_orders else 'shipments')
         if not any(value is not None for dataset in datasets for key, value in dataset.metrics.items() if ".total." in key):
             from app.analysis.section_reports import _required_fields
             missing = sorted({field for spec in plan.sections for field in _required_fields(spec, adapter)
@@ -1137,6 +1218,9 @@ class ReportService:
             raw = await self._ai.generate_json(narrative_messages(request.prompt, plan, datasets, scope),
                                                 max_tokens=self._settings.deepseek_max_output_tokens)
             texts, repaired = grounded_text(raw, datasets)
+            if channel_orders:
+                from app.analysis.channel_presentation import order_text
+                texts = {key: [order_text(text) for text in paragraphs] for key, paragraphs in texts.items()}
             narrative_source = "ai_repaired" if repaired else "ai"
         except AIPrivacyError:
             raise
@@ -1159,14 +1243,35 @@ class ReportService:
             for key, value in dataset.metrics.items():
                 if ".total." in key and value is not None:
                     label = card_label(dataset.requirement.title, adapter.measures[key.split(".total.", 1)[1]].label)
+                    measure_spec = adapter.measures[key.split('.total.', 1)[1]]
+                    display_value = f'\u20b9{value:,.2f}' if measure_spec.value_format == 'currency' else value
                     cards.append(DisplayMetric(key=key.replace(".", "_"), label=label,
-                        value=value, unit="text"))
+                        value=display_value, unit="text"))
+        # A grouped section's total adds no KPI when the same measure covers the same cohort.
+        # Prefer overview cards; equal values from different cohorts remain distinct.
+        from app.analysis.section_reports import _registered_rows
+        unique_cards, seen_cards = [], set()
+        by_key = {card.key: card for card in cards}
+        for dataset in sorted(datasets, key=lambda d: bool(d.requirement.dimensions)):
+            cohort = tuple(row['_index'] for row in _registered_rows(dataset.requirement, rows))
+            for key in dataset.metrics:
+                if '.total.' not in key or key.replace('.', '_') not in by_key:
+                    continue
+                identity = (key.split('.total.', 1)[1], cohort)
+                if identity not in seen_cards:
+                    seen_cards.add(identity)
+                    unique_cards.append(by_key[key.replace('.', '_')])
+        if channel_orders:
+            cards = unique_cards
         if source:
             limitations.extend(source.limitations)
         analysis_filters = ["Analysis filter: " + f.describe(adapter, get_vocabulary("shipment")) for f in plan.filters]
         limitations = list(dict.fromkeys([*plan.notes, *analysis_filters, *limitations]))
         from app.analysis.interpreter import concise_report_title
         title = concise_report_title(plan, adapter)
+        if channel_orders:
+            from app.analysis.channel_presentation import order_text
+            title = order_text(title)
         company = request.company_name or request.data.get("company_name")
         customer_id = request.customer_id or request.data.get("customer_id")
         if selected:
@@ -1188,7 +1293,7 @@ class ReportService:
             content=ReportContent(title=title, executive_summary=summary, sections=content_sections,
                                   findings=[], recommendations=[], data_limitations=limitations[:15]),
             structured_report=StructuredReport(report_id=report_id, report_type="shipment", title=title,
-                subtitle="Shipment Analysis Report", generated_at=generated_at, executive_summary=StructuredSummary(paragraphs=[summary]),
+                subtitle="Channel Orders Analysis Report" if channel_orders else "Shipment Analysis Report", generated_at=generated_at, executive_summary=StructuredSummary(paragraphs=[summary]),
                 metrics=cards[:4], sections=sections, findings=[], recommendations=[], limitations=limitations,
                 charts=charts, chart_notes=chart_notes, scope=scope, company_name=company, customer_id=customer_id,
                 plan=plan.to_dict(adapter, get_vocabulary("shipment"))),
@@ -1507,13 +1612,17 @@ class ReportService:
     def export_docx(self, document: ReportDocument) -> tuple[bytes, str]:
         return self._export(document, generate_docx, "docx")
 
+    def export_xlsx(self, document: ReportDocument) -> tuple[bytes, str]:
+        from app.generators.xlsx_generator import generate_xlsx
+        return self._export(document, generate_xlsx, 'xlsx')
+
     def export_pptx(self, document: ReportDocument) -> tuple[bytes, str]:
         from app.generators.pptx_generator import generate_pptx
         return self._export(document, generate_pptx, "pptx")
 
     def preview_pptx(self, document: ReportDocument) -> dict:
         from app.generators.presentation_layout import preview_pptx
-        if document.report_type == "shipment":
+        if document.report_type in ('shipment', 'attachment'):
             verify_revision(document)
         try:
             return preview_pptx(document)
@@ -1524,7 +1633,7 @@ class ReportService:
         return self._export(document, generate_pdf, "pdf")
 
     def _export(self, document: ReportDocument, generator, extension: str) -> tuple[bytes, str]:
-        if document.report_type == "shipment":
+        if document.report_type in ('shipment', 'attachment'):
             receipt = verify_revision(document)
             logger.info("Report export revision verified: request_id=%s dataset=%s revision=%s format=%s",
                         request_id_var.get(), receipt["dataset"], receipt["revision"], extension)

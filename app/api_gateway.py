@@ -97,6 +97,10 @@ class ServiceRoute:
 SERVICE_ROUTES = (
     ServiceRoute("WhatsApp", "/api/escalation", "ESCALATION_SERVICE_URL",
                  "ESCALATION_SERVICE_TOKEN", "ESCALATION_GATEWAY_TIMEOUT_SECONDS"),
+    # Ai_Box_Service module; it forwards the seller's X-Shipment-Authorization token to Bigship.
+    ServiceRoute("ChannelWiseReport", "/api/channel_wise_report", "AI_BOX_SERVICE_URL",
+                 "AI_BOX_SERVICE_TOKEN", "AI_BOX_SERVICE_TIMEOUT_SECONDS",
+                 token_header="X-Ai-Box-Service-Token", default_timeout=60),
 )
 
 
