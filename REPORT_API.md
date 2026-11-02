@@ -282,6 +282,50 @@ Open contract gaps (not guessed):
 - The fetch is synchronous inside the request (bounded by `REPORT_DEADLINE_SECONDS`); there is no job queue, so
   reports above `SHIPMENT_API_MAX_RECORDS` need a narrower range until a worker exists.
 
+### `POST /api/reports/source-count` (exact pre-analysis count)
+
+The number a report will read, from the same query and count call report generation uses (one upstream request),
+so the "AI will read about N shipments" figure cannot differ from the report. Requires `X-User-Id` and
+`X-Shipment-Authorization`, like `/generate`.
+
+```json
+// request
+{"filters": {"date_field": "manifest_datetime", "from_date": "2026-10-21", "to_date": "2026-10-27",
+             "status": "All Statuses", "timezone": "Asia/Kolkata"}}
+// response
+{"exact_count": 25, "is_estimate": false, "filters": {"type": 0, "status": "All Statuses", "fromDate": "2026-10-21 00:00:00",
+ "toDate": "2026-10-28 00:00:00", "toDate_exclusive": true, "...": "..."}}
+```
+
+Errors use the standard error body (`upstream_timeout` 504 and `upstream_unavailable` 502 are `retryable`).
+
+### `GET /health/ready`
+
+`200 {"status": "ready", "checks": {"database": true, "ai_configured": true, "shipment_source_configured": true}}`
+or `503` with `"status": "not_ready"` and the failing check set to `false` (never addresses or error text).
+`/health` stays a liveness check. For a JSON, CORS-readable answer while the container is down or restarting,
+apply [docs/nginx-ai-box-unavailable.conf](docs/nginx-ai-box-unavailable.conf).
+
+### Seller-facing behaviour (plan-first workflow)
+
+- The plan's words are matched to the values in the fetched shipments before filtering: any spelling of a status
+  ("pickup_scheduled", "PICKUP SCHEDULED"), a broad status that covers detailed ones ("Pending" includes
+  "Pickup Scheduled" and "Not Picked"), and partial courier/city names ("delhivery" -> "Delhivery Surface").
+- Order IDs and AWBs in the prompt ("Order ID: 296803827", "296803827 order no ka status") select only those
+  shipments. They are read by the backend, never by the AI; an unknown ID returns `no_matching_records` with
+  `details.reason = "order_not_found"`, never an all-shipment report.
+- A report is built whenever the meaning is clear. Planner clarification questions and scope echoes do not block it;
+  an unusable plan falls back to the rule-based interpreter (a plan carrying code/SQL is still rejected). A status or
+  period named in the prompt outside the selected filters is read from the shipment API (within the six-month limit).
+- `no_matching_records` messages are plain sentences in the language of the question (English, Hindi or Hinglish)
+  that name the period, the status and the condition that removed the shipments. `details.filter_field` names it.
+- KPI cards use registered names (`orders` -> "Total Shipments", `shipping_charges` -> "Total Freight Charges",
+  `avg_charge` -> "Average Freight Charge per Shipment"). A card repeating another card's figure is omitted; a
+  filtered section's card is prefixed with the section title. Money is shown as `₹1,89,416.82` (Indian grouping,
+  half-up to paise) and rates as `12.5%`; the exact numbers remain in `metrics.section_metrics`.
+- Notes about how the backend verified or interpreted the data, and narrative-repair notices, are written to the audit
+  logs and not shown in the report (`generation.notice` is `null` for these).
+
 ## Calculations and scope
 
 All rates use supplied records, never unrelated summary counters. Paginated `getOrderList: {data: [...], total: 1000}` retains total separately in scope.reported_total. `dataset_scope: "sample"` explicitly marks a supplied sample; a bare list is labelled supplied_records, never presumed a full dataset. Sanitized AI samples are qualitative only.

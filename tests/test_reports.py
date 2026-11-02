@@ -386,8 +386,8 @@ def test_structured_highlight_invented_number_is_removed(client, fake_ai):
     response = client.post("/api/reports/generate", json=SAMPLE_REQUEST)
     assert response.status_code == 200, response.text
     assert "999999" not in json.dumps(response.json()["structured_report"])
-    assert response.json()["generation"] == {"ai_calls": 1, "narrative_source": "ai_repaired",
-        "notice": "Some AI statements were removed because their numbers did not match your data. All numbers shown are verified."}
+    # The repair is recorded for audit; sellers are not shown a notice about how the narrative was produced.
+    assert response.json()["generation"] == {"ai_calls": 1, "narrative_source": "ai_repaired", "notice": None}
 
 
 class SequenceAI(FakeAI):

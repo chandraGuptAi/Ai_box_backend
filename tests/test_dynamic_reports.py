@@ -129,7 +129,7 @@ def test_cancellation_reasons_from_the_api_are_used_and_absence_claims_removed(c
     text = json.dumps(s["executive_summary"]) + json.dumps(s["findings"])
     assert "No cancellation reasons" not in text and "not recorded" not in text
     assert_verified(report)
-    assert report["generation"]["notice"]
+    assert report["generation"]["notice"] is None  # the removal is audited, not shown to the seller
 
 
 def test_reasons_absent_in_data_are_not_reported_as_present(client, ai):
@@ -218,7 +218,8 @@ def test_period_with_no_matching_records_is_stated_not_substituted(client, ai):
     orders = make_orders(10, day=lambda i: date(2026, 6, 10))
     result = generate(client, "Courier performance for last month", payload(orders, as_of="2026-10-13"), status=422)
     assert result["error"]["code"] == "no_matching_records"
-    assert "No data available" in result["error"]["message"]
+    # The seller is told which period had no shipments, in plain words.
+    assert result["error"]["message"].startswith("We didn't find any shipments between 1 Sep 2026 and 30 Sep 2026.")
 
 
 # --- Missing data and partial responses ------------------------------------------------------

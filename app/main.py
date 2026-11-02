@@ -115,6 +115,31 @@ async def health() -> dict:
     }
 
 
+@app.get("/health/ready", tags=["Health"], summary="Readiness: database, AI key and shipment source configured")
+async def ready() -> JSONResponse:
+    """200 only when a report can be generated; 503 names the failing dependency, never its address or error."""
+    from starlette.concurrency import run_in_threadpool
+
+    def database_ok() -> bool:
+        import os
+        import psycopg
+        try:
+            with psycopg.connect(os.environ["DATABASE_URL"], connect_timeout=3) as connection:
+                connection.execute("SELECT 1")
+            return True
+        except Exception:
+            logger.warning("Readiness check: database unavailable (request_id=%s)", request_id_var.get())
+            return False
+
+    checks = {"database": await run_in_threadpool(database_ok), "ai_configured": settings.deepseek_configured,
+              "shipment_source_configured": bool(settings.shipment_api_base_url)}
+    ready_now = all(checks.values())
+    return JSONResponse(status_code=200 if ready_now else 503,
+                        content={"status": "ready" if ready_now else "not_ready", "checks": checks,
+                                 "timestamp": datetime.now(timezone.utc).isoformat()},
+                        headers={"Cache-Control": "no-store"})
+
+
 from app.api.insights_routes import router as insights_router
 from app.api.skill_routes import router as skill_router, prompt_router
 

@@ -174,6 +174,7 @@ SHIPMENT_VOCABULARY = PlanVocabulary(
                   (r"exceptions|ndrs", "exception")),
     detail_columns={
         "order_id": ColumnSpec("Order ID"), "awb_number": ColumnSpec("AWB"), "order_date": ColumnSpec("Order Date", "date"),
+        "order_reference": ColumnSpec("Order ID"), "awb_reference": ColumnSpec("AWB"),
         "status": ColumnSpec("Status"), "courier": ColumnSpec("Courier"), "payment_mode": ColumnSpec("Payment Mode"),
         "cancellation_reason": ColumnSpec("Cancellation Reason"), "destination_state": ColumnSpec("Destination State"),
         "rto_reason": ColumnSpec("RTO Reason"),

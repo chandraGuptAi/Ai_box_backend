@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import logging
 from logging.handlers import RotatingFileHandler
 import json
@@ -15,7 +17,7 @@ import threading
 from collections import Counter, OrderedDict
 from typing import Any
 from fastapi import HTTPException
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
@@ -52,6 +54,7 @@ from app.prompts.report_intent import (detect_intent, scope_analysis, selected_t
                                       report_charts, deterministic_narrative, shape_narrative, relevant_metrics)
 from app.prompts.registry import get_report_definition, list_report_definitions
 from app.services.deepseek_service import DeepSeekService
+from app.services import audit_db
 from app.services.report_activity import write_report_activity
 from app.services.shipment_insights import build_insights, headline_cards, insights_narrative
 from app.services.report_evidence import (NarrativeRepairError, repair_unsupported_narrative,
@@ -86,6 +89,7 @@ def _log_validation_event(event):
         handler.handle(logging.LogRecord(audit.name, logging.WARNING, __file__, 0, message, (), None))
     except OSError:
         logger.warning("Validation audit file is unavailable; diagnostics remain in console logs.")
+    audit_db.submit("validation", event)
 
 
 _IST = timezone(timedelta(hours=5, minutes=30))
@@ -129,6 +133,15 @@ def write_coverage_audit(record: dict[str, Any]) -> None:
     except OSError:
         logger.warning("Coverage audit file is unavailable; report_id=%s outcome=%s",
                        record.get("report_id"), record.get("outcome"))
+    audit_db.submit("coverage", record)
+
+
+def seller_reference(user_id: str | None) -> str | None:
+    """A keyed, non-reversible seller pseudonym for the audit trail (never the seller ID itself)."""
+    if not user_id:
+        return None
+    from app.analysis.accuracy import _SIGNING_KEY
+    return "s_" + hmac.new(_SIGNING_KEY, b"seller:" + str(user_id).encode(), hashlib.sha256).hexdigest()[:24]
 
 
 def _coverage_record(request, user_id, outcome, *, report_id=None, completeness=None, notes=(), details=None):
@@ -154,6 +167,17 @@ def _previous_charts(prev: Any) -> list[dict[str, Any]]:
     structured = prev.get("structured_report") if isinstance(prev, dict) else None
     charts = structured.get("charts") if isinstance(structured, dict) else None
     return [c for c in charts if isinstance(c, dict)] if isinstance(charts, list) else []
+
+
+# Notes about how the backend verified or interpreted the data are audit facts, not seller information.
+_TECHNICAL_NOTE = re.compile(r"could not be checked|applied by the shipment (?:service|api)|interpreted by ai|"
+                             r"validated against the supplied fields|^section denominator:|^ranking basis:|^check not run|records were fetched with|"
+                             r"^analysis filter: \S.* (?:eq|ne|in|not_in|gt|gte|lt|lte|between) ", re.I)
+
+
+def seller_notes(notes):
+    """The notes a seller should read: what is missing or partial, never how the backend checked it."""
+    return [n for n in dict.fromkeys(notes) if isinstance(n, str) and not _TECHNICAL_NOTE.search(n)]
 
 
 def _clean(value, limit):
@@ -528,7 +552,13 @@ class ReportService:
                 write_report_activity({
                     "event": "report_generation", "request_id": request_id_var.get(),
                     "report_id": report.report_id if report else report_id_var.get(),
+                    "seller_id": user_id, "user_id": user_id,
+                    "customer_id": report.customer_id if report else request.customer_id,
+                    "company_name": request.company_name, "prompt": request.prompt,
                     "report_type": request.report_type, "source": request.source,
+                    "filters": request.filters.model_dump(mode="json") if request.filters else None,
+                    "date_range": request.date_range,
+                    "generation": report.generation if report else None,
                     "started_at": started_at.isoformat(), "completed_at": completed_at.isoformat(),
                     "started_at_ist": started_at.astimezone(_IST).isoformat(),
                     "duration_ms": round((time.monotonic() - started) * 1000),
@@ -539,6 +569,7 @@ class ReportService:
                     "previous_report_id": (request.previous_report or {}).get("report_id"),
                     "records_analyzed": report.records_analyzed if report else None,
                     "ai_calls": (report.generation or {}).get("ai_calls") if report else None,
+                    "seller_ref": seller_reference(user_id),
                 })
             finally:
                 report_id_var.reset(report_token)
@@ -568,6 +599,7 @@ class ReportService:
                     return patched
 
         approved_plan = None
+        planner_ran = False
         if definition.report_type == "shipment" and self._settings.report_ai_planner:
             from app.analysis.interpreter import plan_request_before_fetch
             # Authenticate delegated access before paying for interpretation; never forward it to AI.
@@ -576,9 +608,19 @@ class ReportService:
                 build_query(request.filters, self._settings)
             approved_plan = await plan_request_before_fetch(self._ai, request,
                 digest(f"{user_id or 'payload'}:{digest(shipment_credential or '')}")[:20])
+            planner_ran = True  # None: the model plan was unusable; the rule-based interpreter answers instead
+            if approved_plan is not None and approved_plan.widen_status and request.filters is not None:
+                request = self._follow_prompt_status(request)
+            if approved_plan is not None and approved_plan.widen_dates and request.filters is not None:
+                request, approved_plan = self._follow_prompt_dates(request, approved_plan)
+            if approved_plan is None:
+                from app.analysis.interpreter import mentions_shipment_data
+                if not mentions_shipment_data(request.prompt, get_adapter(definition.report_type)):
+                    from app.messages import message
+                    raise InvalidPromptError(message("unrelated", request.prompt))
 
         # Validate that user prompt represents a meaningful analytical request
-        if approved_plan is None and request.prompt and request.prompt.strip():
+        if approved_plan is None and not planner_ran and request.prompt and request.prompt.strip():
             validation = self._prompt_skill.validate(request.prompt, report_type=request.report_type)
             if not validation.is_valid:
                 ai_suggestions = await self._generate_data_tailored_suggestions(
@@ -619,6 +661,8 @@ class ReportService:
                                                  enforce=self._settings.require_complete_source)
                 request = request.model_copy(update={"data": source.data})
         except AppError as exc:  # a stopped fetch or gate is audited too (details hold counts, never credentials)
+            if isinstance(exc, NoMatchingRecordsError) and not (isinstance(exc.details, dict) and exc.details.get("reason")):
+                exc.message = self._no_shipments_message(request)
             write_coverage_audit(_coverage_record(request, user_id, exc.code, details=exc.details))
             from app.analysis.accuracy import Audit
             failed_snapshot = DatasetSnapshot("{}", "[]", "{}", "{}", request_id_var.get() or uuid.uuid4().hex,
@@ -642,15 +686,17 @@ class ReportService:
             adapter = get_adapter(definition.report_type)
             vocab = get_vocabulary(definition.report_type)
             rows = await run_in_threadpool(adapter.rows, request.data)
+            # The plan's words ("Pending", "delhivery") are matched to this data's own values before filtering.
+            from app.analysis.resolve import resolve_plan_values
+            approved_plan = resolve_plan_values(approved_plan, rows)
             if any(f.field == "destination_pincode" for f in approved_plan.filters) and not any(
                     row.get("destination_pincode") is not None for row in rows):
-                raise NoMatchingRecordsError(
-                    f"{len(rows):,} shipments were received, but none contains a valid destination pincode. "
-                    "Pincode analysis cannot be generated from these records.",
+                raise NoMatchingRecordsError(self._fields_missing_message(request, ["destination_pincode"], adapter),
                     details={"reason": "required_fields_missing", "source_records": len(rows), "pincode_records": 0,
                              "missing_fields": ["destination_pincode"], "matching_records": 0,
                              "selected_filters": selected.to_dict() if selected else None})
-            absent_filters = [f.field for f in approved_plan.filters if not any(row.get(f.field) is not None for row in rows)]
+            absent_filters = [f.field for f in approved_plan.filters if f.field in adapter.fields
+                              and not any(row.get(f.field) is not None for row in rows)]
             if absent_filters:
                 # Missing data is an unavailable analysis result, not a prompt-editing task.
                 # Keep the predicate in every requested section so it is never silently ignored.
@@ -669,10 +715,7 @@ class ReportService:
                 scope["authorized_source_scope"] = authorized_source_scope
                 scope["source_analysis_filters"] = upstream_analysis_filters
             if not scoped:
-                raise NoMatchingRecordsError("No data available for the selected filters and analysis.",
-                    details={"reason": "analysis_filters_no_match", "source_records": len(rows),
-                             "pincode_records": sum(r.get("destination_pincode") is not None for r in rows),
-                             "matching_records": 0, "selected_filters": selected.to_dict() if selected else None})
+                raise self._no_match_error(request, approved_plan, rows, selected, adapter, vocab)
             return await self._generate_section_report(request, approved_plan, scope, scoped, snapshot, source,
                                                        selected, adapter, approved_plan.planner_calls)
 
@@ -692,8 +735,7 @@ class ReportService:
                 _scope_conflict(plan, selected, await run_in_threadpool(lambda: vocab.context(request.data).as_of))
             if plan.sections:
                 if not scoped_rows:
-                    raise NoMatchingRecordsError("No data available for the selected filters and analysis.",
-                        details={"matching_records": 0, "selected_filters": selected.to_dict() if selected else None})
+                    raise self._no_match_error(request, plan, chart_adapter.rows(request.data), selected, chart_adapter, vocab)
                 return await self._generate_section_report(request, plan, scope, scoped_rows, snapshot, source,
                                                            selected, chart_adapter, planner_calls)
             intent = _plan_intent(intent, plan, vocab)
@@ -715,7 +757,9 @@ class ReportService:
         if analysis.records_analyzed == 0:
             logger.info("No data available: request_id=%s report_id=%s; generation stopped before AI/report creation",
                         request_id_var.get(), report_id_var.get())
-            raise NoMatchingRecordsError("No data available for the selected filters and analysis.",
+            if plan is not None and vocab is not None:
+                raise self._no_match_error(request, plan, chart_adapter.rows(request.data), selected, chart_adapter, vocab)
+            raise NoMatchingRecordsError(self._no_shipments_message(request),
                 details={"selected_filters": selected.to_dict() if selected else None, "matching_records": 0})
         if chart_plan.chart_only and intent:
             # Charts only: Python computes them and no narrative is needed, so DeepSeek is not called.
@@ -796,6 +840,9 @@ class ReportService:
                     narrative_source = "ai_repaired"
                     notice = ("Some AI statements were removed because their numbers did not match your data. "
                               "All numbers shown are verified.")
+        if notice:
+            logger.info("Narrative adjusted (not shown to the seller): request_id=%s source=%s", request_id_var.get(),
+                        narrative_source)
         claims_removed = 0
         chosen_tables = selected_tables(analysis, intent) if intent else {f"table_{i}": t for i, t in enumerate(analysis.tables)}
         chosen_tables = {key: annotate_table(table) for key, table in chosen_tables.items()}
@@ -908,7 +955,7 @@ class ReportService:
             company_name=company,
             customer_id=customer_id,
             generation={"ai_calls": (0 if narrative_source == "deterministic" else 1) + planner_calls,
-                        "narrative_source": narrative_source, "notice": notice},
+                        "narrative_source": narrative_source, "notice": None},
         )
 
         summary = narrative.executive_summary if narrative else StructuredSummary(paragraphs=content.executive_summary.split("\n\n"))
@@ -975,9 +1022,9 @@ class ReportService:
             # the report. Only a partial report (allow_partial) is labelled, so it never reads as complete.
             write_coverage_audit(_coverage_record(request, user_id, "generated", report_id=report.report_id,
                                                   completeness=source.completeness, notes=source.limitations))
-            partial = list(source.limitations)
             structured = report.structured_report
-            structured.limitations = list(dict.fromkeys(partial + structured.limitations))[:30]
+            structured.limitations = seller_notes(list(source.limitations) + structured.limitations)[:30]
+            report.content.data_limitations = seller_notes(report.content.data_limitations)
         if request.previous_report:
             report = self._merge_with_previous_report(report, request.previous_report, request.prompt, intent=intent,
                                                       chart_edit=chart_edit, customer_id=request.customer_id)
@@ -1027,7 +1074,8 @@ class ReportService:
                 end = min(end, upper)
             applied.append({"field": condition.field, "op": condition.op, "value": list(values) if condition.op == "between" else values[0], "applied_by": "shipment_api"})
         if start > end:
-            raise NoMatchingRecordsError("No data available for the requested date range.", details={"matching_records": 0})
+            raise NoMatchingRecordsError(self._no_shipments_message(request),
+                                         details={"reason": "requested_dates_outside_selection", "matching_records": 0})
         from app.analysis.executor import _matches
         adapter = get_adapter("shipment")
         source_field = request.filters.date_field
@@ -1118,23 +1166,23 @@ class ReportService:
     async def _generate_section_report(self, request, plan, scope, rows, snapshot, source, selected, adapter, planner_calls):
         """Render the approved AnalysisPlan sections; generic templates never enter this path."""
         from app.analysis.executor import execute_ordered_sections
-        from app.analysis.section_reports import narrative_messages, grounded_text, verify_section_coverage, section_title, card_label
+        from app.analysis.section_reports import (narrative_messages, grounded_text, verify_section_coverage, section_title,
+                                                  card_label, card_value)
         datasets = await run_in_threadpool(execute_ordered_sections, plan, rows)
         if not any(value is not None for dataset in datasets for key, value in dataset.metrics.items() if ".total." in key):
             from app.analysis.section_reports import _required_fields
             missing = sorted({field for spec in plan.sections for field in _required_fields(spec, adapter)
                               if not any(row.get(field) not in (None, "") for row in rows)})
-            labels = ", ".join(adapter.fields[field].label for field in missing)
             raise NoMatchingRecordsError(
-                f"{len(rows):,} shipments were received, but the requested analysis data is unavailable"
-                + (f": {labels}." if labels else ".") + " No report was created.",
+                self._fields_missing_message(request, missing, adapter) if missing else self._no_shipments_message(request),
                 details={"reason": "required_fields_missing" if missing else "analysis_data_unavailable",
                          "source_records": len(rows), "missing_fields": missing, "matching_records": 0,
                          "selected_filters": selected.to_dict() if selected else None})
         texts = {d.requirement.id: [d.text] for d in datasets}
         narrative_source = "deterministic_fallback"
         try:
-            raw = await self._ai.generate_json(narrative_messages(request.prompt, plan, datasets, scope),
+            prompt, ai_scope = self._without_references(request.prompt, scope, plan)
+            raw = await self._ai.generate_json(narrative_messages(prompt, plan, datasets, ai_scope),
                                                 max_tokens=self._settings.deepseek_max_output_tokens)
             texts, repaired = grounded_text(raw, datasets)
             narrative_source = "ai_repaired" if repaired else "ai"
@@ -1144,6 +1192,7 @@ class ReportService:
             logger.warning("Grounded narrative unavailable; preserving the approved section datasets. request_id=%s",
                            request_id_var.get())
         sections, content_sections, tables, charts, chart_notes, limitations, cards = [], [], [], [], [], [], []
+        shown_cards = {}
         for index, dataset in enumerate(datasets):
             identifier = dataset.requirement.id
             # Zero/unavailable facts are always Python-authored, regardless of the AI prose.
@@ -1158,15 +1207,27 @@ class ReportService:
             limitations.extend(dataset.limitations)
             for key, value in dataset.metrics.items():
                 if ".total." in key and value is not None:
-                    label = card_label(dataset.requirement.title, adapter.measures[key.split(".total.", 1)[1]].label)
-                    cards.append(DisplayMetric(key=key.replace(".", "_"), label=label,
-                        value=value, unit="text"))
+                    metric = adapter.measures[key.split(".total.", 1)[1]]
+                    # A filtered section's count is not the report total, so it is named after its section.
+                    label = card_label(dataset.requirement.title, metric, prefixed=bool(dataset.requirement.filters))
+                    if label in shown_cards:
+                        if shown_cards[label] == value:
+                            continue  # the same figure is already on a card
+                        label = card_label(dataset.requirement.title, metric, prefixed=True)
+                    shown_cards[label] = value
+                    display, unit = card_value(value, metric)
+                    cards.append(DisplayMetric(key=key.replace(".", "_"), label=label, value=display, unit=unit))
         if source:
             limitations.extend(source.limitations)
-        analysis_filters = ["Analysis filter: " + f.describe(adapter, get_vocabulary("shipment")) for f in plan.filters]
-        limitations = list(dict.fromkeys([*plan.notes, *analysis_filters, *limitations]))
+        vocabulary = get_vocabulary("shipment")
+        analysis_filters = ["Showing only shipments where " + f.describe(adapter, vocabulary) + "." for f in plan.filters]
+        limitations = seller_notes([*plan.notes, *analysis_filters, *limitations])
         from app.analysis.interpreter import concise_report_title
         title = concise_report_title(plan, adapter)
+        references = [v for f in plan.filters if f.text == "order_reference" for v in f.value]
+        if references and "[REDACTED]" in title:
+            # The model never sees order IDs; the seller's own order number is restored in their report title.
+            title = title.replace("[REDACTED]", ", ".join(references[:3]))[:72]
         company = request.company_name or request.data.get("company_name")
         customer_id = request.customer_id or request.data.get("customer_id")
         if selected:
@@ -1203,19 +1264,159 @@ class ReportService:
                                                  completeness=source.completeness, notes=source.limitations))
         return report
 
+    @staticmethod
+    def _without_references(prompt, scope, plan):
+        """Order IDs and AWBs never go to the AI: the narrative is told about "the requested order" instead."""
+        references = [str(v) for f in plan.filters if f.text == "order_reference" for v in f.value]
+        if not references:
+            return prompt, scope
+        pattern = re.compile("|".join(re.escape(r) for r in sorted(references, key=len, reverse=True)), re.I)
+        masked = json.loads(pattern.sub("the requested order", json.dumps(scope, default=str)))
+        return pattern.sub("the requested order", prompt or ""), masked
+
+    def _follow_prompt_status(self, request):
+        """The prompt names a different status than selected: read every status, the plan's filter decides."""
+        if request.source != "shipment_api":
+            return request  # supplied records cannot be re-read; the no-match message explains the status choice
+        return request.model_copy(update={"filters": request.filters.model_copy(update={"status": "All Statuses"})})
+
+    def _follow_prompt_dates(self, request, plan):
+        """Read the days the question names; supplied records (or a range over the limit) are fitted instead."""
+        filters = request.filters
+        low, high = plan.widen_dates
+        today = datetime.now(ZoneInfo(filters.timezone)).date()
+        start, end = min(filters.from_date, low), min(max(filters.to_date, high), today)
+        if request.source == "shipment_api" and (end - start).days + 1 <= self._settings.shipment_api_max_range_days:
+            return request.model_copy(update={"filters": filters.model_copy(update={"from_date": start, "to_date": end})}), plan
+        return request, self._fit_dates(request, plan, filters.from_date, filters.to_date)
+
+    def _fit_dates(self, request, plan, start, end):
+        """Date filters limited to the dates the records cover; a seller note says which days are shown."""
+        from app.analysis.plan import ExecutionFilter, Filter
+        field = request.filters.date_field
+        bounded = {"between", "eq", "gte", "gt", "lte", "lt"}
+
+        def fit(condition):
+            if condition.field != field or condition.op not in bounded:
+                return condition
+            values = condition.value if isinstance(condition.value, (list, tuple)) else [condition.value]
+            days = [v if isinstance(v, date) else date.fromisoformat(v) for v in values]
+            lo = days[0] if condition.op in {"between", "eq", "gte", "gt"} else start
+            hi = days[-1] if condition.op in {"between", "eq", "lte", "lt"} else end
+            lo, hi = max(lo, start), min(hi, end)
+            if lo > hi:
+                raise NoMatchingRecordsError(self._no_shipments_message(request),
+                    details={"reason": "requested_dates_outside_selection", "matching_records": 0})
+            value = [lo.isoformat(), hi.isoformat()]
+            return (Filter(condition.field, "between", tuple(value), condition.text) if isinstance(condition, Filter)
+                    else ExecutionFilter(field=condition.field, op="between", value=value))
+
+        from app.messages import language, period
+        note = {"en": "Showing {p}: your selected dates don't include the rest of the period you asked about.",
+                "hi": "{p} दिखाया गया है: आपकी चुनी गई तारीख़ों में पूछी गई बाकी अवधि शामिल नहीं है।",
+                "hinglish": "{p} dikhaya gaya hai: aapki chuni gayi dates mein poochi gayi baaki period shaamil nahi hai."}
+        lang = language(request.prompt)
+        low, high = plan.widen_dates
+        shown = period(max(low, start), min(high, end), lang)
+        return replace(plan, filters=tuple(fit(f) for f in plan.filters), widen_dates=None,
+                       sections=tuple(s.model_copy(update={"filters": tuple(fit(f) for f in s.filters)}) for s in plan.sections),
+                       notes=(*plan.notes, note[lang].format(p=shown)))
+
+    @staticmethod
+    def _period_words(request, lang):
+        from app.messages import period
+        selected = selected_filters(request.filters, request.data or {})
+        return selected, period(selected.from_date, selected.to_date, lang)
+
+    def _no_shipments_message(self, request):
+        from app.messages import language, message, status_phrase
+        lang = language(request.prompt)
+        selected, when = self._period_words(request, lang)
+        or_status = {"en": " or a different status", "hi": " या दूसरा स्टेटस चुनें", "hinglish": " ya doosra status chunein"}[lang]
+        return message("no_shipments", request.prompt, period=when, status=status_phrase(selected.status_label, lang),
+                       or_status=or_status if selected.status_selected else "")
+
+    def _fields_missing_message(self, request, fields, adapter):
+        from app.messages import language, message
+        lang = language(request.prompt)
+        _, when = self._period_words(request, lang)
+        labels = [re.sub(r"\s*\(.*?\)", "", adapter.fields[f].label if f in adapter.fields else f.replace("_", " ")).lower()
+                  for f in fields]
+        joined = labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " and " + labels[-1]
+        return message("fields_missing", request.prompt, period=when, fields=joined)
+
+    @staticmethod
+    def _condition_text(condition, adapter, vocab):
+        """'destination pincode 400000', 'weight 5 kg': a filter in a seller's words."""
+        from app.messages import _day
+        label = re.sub(r"\s*\(.*?\)", "", vocab.label(condition.field, adapter))
+        spec = adapter.fields.get(condition.field)
+        if spec is not None and spec.kind == "date" and condition.op == "between":
+            return f"{label} between {_day(str(condition.value[0]))} and {_day(str(condition.value[1]))}"
+        unit = f" {spec.unit}" if spec is not None and spec.unit else ""
+        values = condition.value if isinstance(condition.value, (list, tuple)) else (condition.value,)
+        if condition.op == "between" and len(values) == 2 and values[0] == values[1]:
+            return f"{label} {values[0]:g}{unit}"
+        if condition.op in {"eq", "in"}:
+            return f"{label} " + " or ".join(adapter.label_of(condition.field, v) for v in values)
+        if condition.op in {"ne", "not_in"}:
+            return f"{label} other than " + " or ".join(adapter.label_of(condition.field, v) for v in values)
+        return condition.describe(adapter, vocab)
+
+    def _no_match_error(self, request, plan, rows, selected, adapter, vocab):
+        """Name the condition that removed every shipment, so the seller knows what to change."""
+        from app.analysis.executor import _matches
+        from app.messages import language, message, status_phrase
+        lang = language(request.prompt)
+        _, when = self._period_words(request, lang)
+        remaining, culprit = rows, None
+        for condition in plan.filters:
+            kept = [r for r in remaining if r.get(condition.field) is not None and _matches(r.get(condition.field), condition)]
+            if not kept:
+                culprit = condition
+                break
+            remaining = kept
+        status = status_phrase(selected.status_label if selected else None, lang)
+        if culprit is not None and culprit.text == "order_reference":
+            text = message("order_not_found", request.prompt, orders=", ".join(culprit.value), period=when)
+        elif culprit is not None and culprit.field in {"status_category", "shipment_status"} and selected and selected.status_selected:
+            wanted = " / ".join(adapter.label_of(culprit.field, v) for v in
+                                (culprit.value if isinstance(culprit.value, (list, tuple)) else (culprit.value,)))
+            text = message("status_mismatch", request.prompt, selected=selected.status_label, wanted=wanted)
+        elif culprit is not None:
+            text = message("filter_no_match", request.prompt, count=len(rows), status=status, period=when,
+                           shipment_word="shipment" if len(rows) == 1 else "shipments",
+                           condition=self._condition_text(culprit, adapter, vocab))
+        elif plan.date_range is not None:
+            from app.messages import period
+            text = message("no_shipments", request.prompt, period=period(plan.date_range.start, plan.date_range.end, lang),
+                           status=status, or_status="")
+        else:
+            text = self._no_shipments_message(request)
+        logger.info("No matching shipments: request_id=%s received=%s filters=%s stopped_at=%s", request_id_var.get(),
+                    len(rows), ",".join(f"{f.field}:{f.op}" for f in plan.filters), culprit.field if culprit else "-")
+        return NoMatchingRecordsError(text, details={
+            "reason": "order_not_found" if culprit is not None and culprit.text == "order_reference" else "analysis_filters_no_match",
+            "source_records": len(rows), "pincode_records": sum(r.get("destination_pincode") is not None for r in rows),
+            "matching_records": 0, "filter_field": culprit.field if culprit else None,
+            "selected_filters": selected.to_dict() if selected else None})
+
     def _pincode_scope(self, plan, request):
-        """Enforce UI PIN scope independently of model output in both planning modes."""
+        """Enforce UI PIN scope and order IDs named in the prompt independently of model output in both planning modes."""
         from app.analysis.plan import Filter
-        from app.analysis.interpreter import pincode_filters
+        from app.analysis.interpreter import order_reference_filters, pincode_filters
         selected = selected_filters(request.filters, request.data or {})
         predicates = []
         if selected.pincodes:
             predicates.append(Filter("destination_pincode", "in", selected.pincodes, "Selected pincodes"))
         predicates.extend(pincode_filters(request.prompt or ""))
+        # Order lookups first: "order not found" is the answer before any other condition is checked.
+        predicates[:0] = order_reference_filters(request.prompt or "")
         existing = list(plan.filters)
         for predicate in predicates:
             if not any(f.field == predicate.field and f.op == predicate.op and f.value == predicate.value for f in existing):
                 existing.append(predicate)
+        existing.sort(key=lambda f: f.text != "order_reference")
         return replace(plan, filters=tuple(existing))
 
     async def _build_plan(self, request, vocab, adapter, intent, chart_plan, account_scope="payload"):

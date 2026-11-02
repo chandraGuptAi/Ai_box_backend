@@ -5,6 +5,8 @@ are used here. Field aliases/status definitions are shared business rules, not t
 """
 from __future__ import annotations
 
+import re
+
 import base64
 import hashlib
 import hmac
@@ -147,6 +149,11 @@ def reference_row(record, timezone_name="Asia/Kolkata"):
     row.update(extended_shipment_fields(record))
     row["manifest_datetime"] = manifest_calendar_day(record, timezone_name)
     row["shipment_status"] = normalize_shipment_status(row["status"])
+    # Order lookups match the source identifier itself (the scrubbed display ID can mask long numbers).
+    for key, field in (("order_reference", "order_id"), ("awb_reference", "awb_number")):
+        raw = _lookup(flat, field)
+        text = str(raw).strip() if raw is not None else ""
+        row[key] = text if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_/-]{0,39}", text) else None
     return row
 
 
@@ -248,10 +255,12 @@ def _matches(row, condition):
             return bounds[0] <= actual <= bounds[1]
         return {"gt": lambda: actual > bounds[0], "gte": lambda: actual >= bounds[0],
                 "lt": lambda: actual < bounds[0], "lte": lambda: actual <= bounds[0]}[op]()
+    from app.analysis.plan import match_key
     if op in ("eq", "ne"):
-        return (str(actual).casefold() == str(value).casefold()) == (op == "eq")
+        numbers = all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (actual, value))
+        return (actual == value if numbers else match_key(actual) == match_key(value)) == (op == "eq")
     if op in ("in", "not_in"):
-        return (str(actual).casefold() in {str(v).casefold() for v in value}) == (op == "in")
+        return (match_key(actual) in {match_key(v) for v in value}) == (op == "in")
     if op == "between":
         return value[0] <= actual <= value[1]
     return {"gt": lambda: actual > value, "gte": lambda: actual >= value,

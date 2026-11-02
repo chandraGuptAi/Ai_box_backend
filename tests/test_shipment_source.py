@@ -336,7 +336,8 @@ def test_missing_manifest_datetime_is_not_replaced_by_order_date(run, coverage_a
     assert completeness["scope_verification"] == "partially_verified"  # status verified, date not
     assert any("manifest datetime filter was applied by the shipment service but could not be checked" in n
                for n in coverage_audit[-1]["notes"])
-    assert any("could not be checked" in n for n in report["limitations"])  # truthful scope coverage remains public
+    # How the backend verified the source is audit data; sellers do not see it.
+    assert not any("could not be checked" in n for n in report["limitations"])
     assert "outside the API filter period" not in report["scope"]["statement"]
 
 

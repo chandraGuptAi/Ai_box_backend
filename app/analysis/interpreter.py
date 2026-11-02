@@ -270,6 +270,36 @@ def pincode_filters(text: str) -> list[Filter]:
             for values, op in ((include, 'in'), (exclude, 'not_in')) if values]
 
 
+_REFERENCE_TOKEN = r"(?=[A-Za-z0-9-]*[0-9])[A-Za-z0-9][A-Za-z0-9-]{3,38}[A-Za-z0-9]"  # never ends with "-"
+
+
+def order_reference_filters(text: str) -> list[Filter]:
+    """Order IDs or AWB numbers named in the prompt select those shipments only.
+
+    Read here, never by the AI (identifiers are masked before any model call), so an order lookup can
+    never become a report on every shipment. "order id :- 296803827", "order no. 296803827",
+    "AWB 1234567890" and "orders 101, 102" all qualify; plain counts such as "5 orders" do not.
+    """
+    pattern = (rf"\b(?P<kind>order|orders|awb|tracking|consignment)\s*(?:ids?|nos?\.?|numbers?|#)?\s*(?:is|are|=|:|#|-|–|:-|\s)*"
+               rf"(?P<values>{_REFERENCE_TOKEN}(?:\s*(?:,|/|;|and|or|aur|&)\s*{_REFERENCE_TOKEN})*)")
+    after = rf"(?<![\w-])(?P<values>{_REFERENCE_TOKEN})\s+(?P<kind>order|awb|tracking)\b"  # "296803827 order no ka status"
+    orders, awbs = [], []
+    for match in [*re.finditer(pattern, text, re.I), *re.finditer(after, text, re.I)]:
+        target = orders if match.group("kind").lower().startswith("order") else awbs
+        target.extend(v for v in re.findall(_REFERENCE_TOKEN, match.group("values"))
+                      if sum(c.isdigit() for c in v) >= 5)
+    kinds = re.findall(r"\b(order|orders|awb|tracking|consignment)\b", text, re.I)
+    if kinds and not orders and not awbs:
+        # "39488811921651 - this is the AWB for an order": a long identifier anywhere in a lookup question.
+        # Eight or more characters, so PIN codes, counts and amounts never qualify; dates are excluded.
+        loose = [v for v in re.findall(rf"(?<![\w-]){_REFERENCE_TOKEN}(?![\w])", text)
+                 if len(v) >= 8 and sum(c.isdigit() for c in v) >= 5 and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v)]
+        awb_words = any(k.lower() in {"awb", "tracking", "consignment"} for k in kinds)
+        (awbs if awb_words else orders).extend(loose)
+    return [Filter(field, "in", tuple(dict.fromkeys(values)), "order_reference")
+            for field, values in (("order_reference", orders), ("awb_reference", awbs)) if values]
+
+
 def _amount(number: str, multiplier: str | None) -> float:
     value = float(number.replace(",", ""))
     if multiplier:
@@ -669,12 +699,15 @@ async def plan_request_before_fetch(ai, request, account_scope):
         "supported_visuals": [SKILLS[name].describe() for name in ("bar", "line", "area", "pie", "doughnut", "histogram", "scatter")],
         "normalized_category_values": {"status_category": sorted(get_vocabulary("shipment").status_values),
             "rto_stage": ["pending", "completed", "unknown", "not_rto"],
-            "shipment_status": ["Pending", "In Transit", "Undelivered", "Out For Delivery", "Delivered", "Cancelled"]},
+            "shipment_status": ["Pickup Scheduled", "Not Picked", "Pending", "In Transit", "Out For Delivery", "Undelivered",
+                                "Delivered", "Cancelled", "RTO In Transit", "RTO Delivered", "Lost"]},
         "account_scope": account_scope,
         "available_source_schema": [{"field": name, "kind": spec.kind, "meaning": spec.label,
             "availability": "unknown_until_fetch"} for name, spec in adapter.fields.items()],
         "supported_metrics": {name: asdict(spec) for name, spec in adapter.measures.items()},
         "filter_operators": ["eq", "ne", "in", "not_in", "gt", "gte", "lt", "lte", "between"],
+        "filter_operators_by_kind": {"category": ["eq", "ne", "in", "not_in"],
+            "number": ["eq", "ne", "gt", "gte", "lt", "lte", "between"], "date": ["eq", "ne", "gt", "gte", "lt", "lte", "between"]},
         "schema": ReportExecutionProposal.model_json_schema(), "skill_instructions": skills}
     if request.previous_report:
         payload["follow_up_context"] = {"report_id": request.previous_report.get("report_id"),
@@ -706,6 +739,7 @@ async def plan_request_before_fetch(ai, request, account_scope):
         "not status_category. OFD means Out For Delivery; broad status_category merges it into in_transit and Undelivered into exception. "
         "Top without a specified metric uses shipment count with a declared ranking; volume does not establish best performance. "
         "For city plus pincode use both dimensions, never substitute states. "
+        "Numeric filters (weight in kg, charges and values in rupees) take plain numbers; an exact amount such as 5 kg uses eq. "
         "Pincode means destination_pincode: a six-digit Indian PIN category, not a numeric measure. "
         "Explicit PIN lists select a cohort (in); exclusions use not_in. Pincode-wise requests group by destination_pincode. "
         "Preserve selected UI pincodes; sections may further narrow them but never widen them. "
@@ -718,19 +752,24 @@ async def plan_request_before_fetch(ai, request, account_scope):
         {"role": "user", "content": json.dumps(payload, default=lambda v: sorted(v) if isinstance(v, (set, frozenset)) else str(v), ensure_ascii=True)}]
     # A general report request does not require the user to design its metrics.
     broad_request, requested_visual = general_report_request(request.prompt)
-    def basic_proposal():
+    def basic_proposal(cohort=()):
         dimension = adapter.status_field
         charts = [requested_visual] if requested_visual else []
         return ReportExecutionProposal.model_validate({"intent": "dataset_overview", "report_title": "Shipment Overview",
-            "source_scope": scope, "requirement_ids": ["requested_overview"], "sections": [{
-                "id": "dataset_overview", "title": "Shipment Overview", "requirement_ids": ["requested_overview"],
+            "source_scope": scope, "requirement_ids": ["requested_overview"], "cohort": [c.model_dump() for c in cohort],
+            "sections": [{"id": "dataset_overview", "title": "Shipment Overview", "requirement_ids": ["requested_overview"],
                 "dimensions": [dimension] if dimension else [], "metrics": [adapter.default_measure], "charts": charts}]})
     proposal = None
     calls = 0
+    hostile = False  # a plan carrying code/SQL keys is never replaced by a fallback report
+    from app.analysis.plan import _CODE_KEY
     for attempt in range(2):
         calls += 1
         try:
             raw = await ai.generate_json(messages, max_tokens=3200)
+            hostile = hostile or (isinstance(raw, dict) and any(_CODE_KEY.search(str(k)) for k in [*raw, *[
+                key for item in (raw.get("sections") if isinstance(raw.get("sections"), list) else [])
+                if isinstance(item, dict) for key in item]]))
             try:
                 proposal = ReportExecutionProposal.model_validate(raw)
             except ValidationError as invalid:
@@ -744,12 +783,13 @@ async def plan_request_before_fetch(ai, request, account_scope):
             reason = ("; ".join(e["msg"][:120] for e in exc.errors()[:3]) if isinstance(exc, ValidationError)
                       else type(exc).__name__)
             logger.warning("[WARN] report_plan request_id=%s attempt=%s reason=invalid_plan detail=%s action=%s",
-                request_id_var.get(), attempt+1, reason, "repair" if attempt == 0 else "fallback_or_stop")
+                request_id_var.get(), attempt+1, reason, "repair" if attempt == 0 else "fallback")
             feedback = ([{"location": list(error["loc"]), "type": error["type"], "reason": error["msg"][:200]} for error in exc.errors()]
                         if isinstance(exc, ValidationError) else [{"type": "invalid_json_plan"}])
             if attempt == 0:
                 repaired_payload = {**payload, "validation_feedback": feedback,
                     "repair_instruction": "Return the complete plan matching the supplied schema. Use registered identifiers only. "
+                        "Use only the operators filter_operators_by_kind allows for each field kind. "
                         "Preserve the exact request and protected source scope. A general report with a graph needs a basic overview, not clarification."}
                 messages = [messages[0], {"role": "user", "content": json.dumps(repaired_payload,
                     default=lambda v: sorted(v) if isinstance(v, (set, frozenset)) else str(v), ensure_ascii=True)}]
@@ -757,63 +797,66 @@ async def plan_request_before_fetch(ai, request, account_scope):
         if broad_request:
             proposal = basic_proposal()
             logger.info("[PASS] report_plan request_id=%s action=registered_overview_fallback", request_id_var.get())
+        elif hostile:
+            from app.messages import message
+            raise AIResponseError(message("not_understood", request.prompt)) from None
         else:
-            raise AIResponseError("We could not build a report from this request with the available shipment data. "
-                "Try describing it using shipment details such as status, courier, city, state, payment mode, "
-                "shipping charges or order value.") from None
+            # The rule-based interpreter answers from the fetched data instead of failing the report.
+            logger.info("[PASS] report_plan request_id=%s action=rule_based_fallback", request_id_var.get())
+            return None
     if proposal.request_kind == "unrelated":
-        raise InvalidPromptError("Please ask for an analysis of your shipment or report data.")
-    # Scope is checked before resolving any optional wording; defaults never override UI choices.
+        if not mentions_shipment_data(request.prompt, adapter):
+            from app.messages import message
+            raise InvalidPromptError(message("unrelated", request.prompt))
+        proposal = basic_proposal()
+    # The UI scope is applied by the source query; the model's echo of it never changes or blocks the report.
     if proposal.source_scope != scope:
-        logger.warning("[WARN] report_plan request_id=%s reason=source_scope_conflict", request_id_var.get())
-        raise ClarificationRequiredError("Your prompt asks for a different date range or status than selected in the filters.",
-            details={"clarification_required": True, "selected_filters": scope})
+        logger.info("[PASS] report_plan request_id=%s reason=source_scope_echo_replaced", request_id_var.get())
+        proposal = proposal.model_copy(update={"source_scope": scope})
     if proposal.clarifications and proposal.clarification_kind == "missing_capability" and proposal.sections:
         # Report the available part; what is missing is listed in the report instead of blocking it.
         proposal = proposal.model_copy(update={"clarifications": (),
             "limitations": tuple(dict.fromkeys([*proposal.limitations, *proposal.clarifications]))[:10]})
     if proposal.clarifications and proposal.clarification_kind == "optional_preferences" and proposal.sections:
         proposal = proposal.model_copy(update={"clarifications": ()})
-    if proposal.request_kind == "general_analysis" and not proposal.sections and not proposal.cohort and proposal.clarification_kind == "optional_preferences":
+    if proposal.request_kind == "general_analysis" and not proposal.sections and not proposal.cohort:
         proposal = basic_proposal()
-    if proposal.request_kind == "general_analysis" and not proposal.sections and not proposal.clarifications and not proposal.cohort:
-        proposal = basic_proposal()
-    if proposal.clarifications and broad_request and proposal.clarification_kind not in {"scope_conflict", "missing_capability"} and not proposal.cohort:
+    if proposal.clarifications and broad_request and not proposal.cohort:
         proposal = basic_proposal()
     if proposal.clarifications:
-        logger.info("[WARN] report_plan request_id=%s reason=clarification_required", request_id_var.get())
-        questions = [str(q).strip() for q in proposal.clarifications if str(q).strip()]
-        msg = f"Please clarify: {questions[0]}" if questions else "Please provide more details about what you would like to analyze."
-        raise ClarificationRequiredError(msg,
-            details={"clarification_required": True, "questions": list(proposal.clarifications)})
-    if proposal.source_scope != scope:
-        logger.warning("[WARN] report_plan request_id=%s reason=source_scope_conflict", request_id_var.get())
-        raise ClarificationRequiredError("Your prompt asks for a different date range or status than selected in the filters.",
-            details={"clarification_required": True, "selected_filters": scope})
+        # Defaults are chosen instead of asking the seller: report what was planned, or a scoped overview.
+        logger.info("[PASS] report_plan request_id=%s reason=clarification_skipped kind=%s sections=%s",
+                    request_id_var.get(), proposal.clarification_kind, len(proposal.sections))
+        proposal = proposal.model_copy(update={"clarifications": ()})
+    if not proposal.sections:
+        proposal = basic_proposal(proposal.cohort)
     from datetime import date
-    for section in proposal.sections:
-        for condition in (*proposal.cohort, *section.filters):
-            if condition.field == selected.date_field and condition.op in {"between", "eq", "gte", "gt", "lte", "lt"}:
-                values = condition.value if isinstance(condition.value, list) else [condition.value]
-                requested_days = [date.fromisoformat(v) for v in values]
-                if any((selected.from_date and day < selected.from_date) or (selected.to_date and day > selected.to_date) for day in requested_days):
-                    raise ClarificationRequiredError("The requested dates are outside the selected date range. Extend the date selection or adjust the prompt.",
-                        details={"clarification_required": True, "selected_filters": scope})
+    requested_days = [date.fromisoformat(v) for c in (*proposal.cohort, *[f for s in proposal.sections for f in s.filters])
+                      if c.field == selected.date_field and c.op in {"between", "eq", "gte", "gt", "lte", "lt"}
+                      for v in (c.value if isinstance(c.value, list) else [c.value])]
+    widen_dates = None
+    if requested_days and ((selected.from_date and min(requested_days) < selected.from_date)
+                           or (selected.to_date and max(requested_days) > selected.to_date)):
+        # The question names days outside the selected dates: those days are read too (bounded by the source).
+        widen_dates = (min(requested_days), max(requested_days))
+        logger.info("[PASS] report_plan request_id=%s reason=dates_follow_prompt", request_id_var.get())
+    widen_status = False
     if selected.status:
         from app.analysis.executor import _matches
+        from app.prompts.shipment_prompt import categorize_status
         for section in proposal.sections:
             for condition in (*proposal.cohort, *section.filters):
                 conflict = (condition.field == "status_category" and not _matches(selected.status, condition))
                 if condition.field == "shipment_status":
-                    from app.prompts.shipment_prompt import categorize_status
                     wanted = condition.value if isinstance(condition.value, list) else [condition.value]
                     if condition.op in {"eq", "in"}:
                         conflict = any(categorize_status(v) != selected.status for v in wanted)
                 if condition.field == "rto_stage" and selected.status != "rto":
                     conflict = not _matches("not_rto", condition)
-                if conflict:
-                    raise ClarificationRequiredError("Your prompt asks for a different status than the status selected in the filter.",
-                        details={"clarification_required": True, "section_id": section.id, "selected_filters": scope})
+                widen_status = widen_status or conflict
+        if widen_status:
+            # The question names other statuses: read all statuses and let the prompt's status filters decide.
+            logger.info("[PASS] report_plan request_id=%s reason=status_follows_prompt", request_id_var.get())
     # A requested section named e.g. "Flagged SKUs" must not be hidden by the customer diagnostics filter.
     from app.report_visibility import customer_safe_id, customer_safe_text
     safe, used = [], set()
@@ -829,7 +872,23 @@ async def plan_request_before_fetch(ai, request, account_scope):
         request_id_var.get(), ",".join(s.id for s in proposal.sections))
     return AnalysisPlan(planner_calls=calls, report_title=proposal.report_title, sections=proposal.sections, intent=proposal.intent, source="ai_registered_operations",
         filters=tuple(Filter(f.field, f.op, tuple(f.value) if isinstance(f.value, list) else f.value) for f in proposal.cohort),
-        notes=proposal.limitations, recommendations=False)
+        notes=proposal.limitations, recommendations=False, widen_status=widen_status, widen_dates=widen_dates)
+
+
+def mentions_shipment_data(prompt, adapter):
+    """Whether the words refer to anything shipment data holds (fields, measures, or common logistics words)."""
+    text = (prompt or "").casefold()
+    if re.search(r"shipment|\border|parcel|consignment|courier|deliver|dispatch|pick ?up|\brto\b|\bcod\b|prepaid|"
+                 r"pin ?code|freight|\bawb\b|status|seller|शिपमेंट|ऑर्डर|कूरियर|डिलीवर|पार्सल", text):
+        return True
+    # A report, summary or data request for a period ("create report for last 90 days") is about shipments.
+    if re.search(r"\b(?:report|summary|overview|analysis|analytics|dashboard|data)\b", text) and re.search(
+            r"\b(?:last|past|previous|this|current|pichh?le|is)\s+(?:\d+\s+)?(?:days?|weeks?|months?|quarters?|years?|din|"
+            r"hafte|mahine|saal)\b|\b(?:today|yesterday|aaj|kal)\b|\d{4}-\d{2}-\d{2}", text):
+        return True
+    patterns = [a for spec in adapter.fields.values() for a in spec.aliases]
+    patterns += [a for spec in adapter.measures.values() for a in spec.aliases]
+    return any(re.search(p, text) for p in patterns)
 
 
 def concise_report_title(plan, adapter):

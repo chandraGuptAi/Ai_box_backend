@@ -147,8 +147,9 @@ def test_unavailable_fields_preserve_requested_section(dimensions, metrics):
     assert "Synthetic cancellation reason" not in report.content.sections[0].content
 
 
-def test_missing_field_can_request_clarification():
-    with pytest.raises(ClarificationRequiredError):
+def test_missing_field_is_explained_instead_of_asking_a_question():
+    from app.errors import NoMatchingRecordsError
+    with pytest.raises(NoMatchingRecordsError, match="don't include rto reason"):
         generate(sections=[section("needed", ("rto_reason",), missing_data="clarify")])
 
 
@@ -168,14 +169,33 @@ def test_narrative_failure_preserves_all_approved_tables():
     assert fallback.generation["narrative_source"] == "deterministic_fallback"
 
 
-@pytest.mark.parametrize("defect", ["sql", "invalid_cohort"])
-def test_invalid_plans_never_fetch_or_publish(defect):
+def test_code_carrying_plans_never_fetch_or_publish():
     def alter(plan):
-        if defect == "sql": plan["sql"] = "SELECT *"
-        else: plan["cohort"] = [{"field": "charge", "op": "between", "value": [10]}]
+        plan["sql"] = "SELECT *"
         return plan
-    with pytest.raises(AIResponseError):
-        generate(ai=PlannedAI(alter_plan=alter))
+    ai = PlannedAI(alter_plan=alter)
+    with pytest.raises(AIResponseError) as error:
+        generate(ai=ai)
+    assert "couldn't work out which report you need" in error.value.message
+    assert ai.events == ["plan", "plan"]
+
+
+class RuleFallbackAI(PlannedAI):
+    """A planner that keeps returning an unusable plan; the rule-based narrative call is answered by code."""
+
+    async def generate_json(self, messages, **kwargs):
+        if "[report_plan]" in messages[0]["content"]:
+            return await super().generate_json(messages, **kwargs)
+        self.calls.append(messages)
+        raise AIResponseError("Synthetic narrative failure", code="ai_invalid_structure")
+
+
+def test_unusable_plan_falls_back_to_rule_based_report_not_an_error():
+    ai = RuleFallbackAI(alter_plan=lambda p: {**p, "cohort": [{"field": "charge", "op": "between", "value": [10]}]})
+    report, _ = generate("Show courier delivery performance", ai=ai)
+    assert report.records_analyzed == 8
+    assert report.generation.get("workflow") != "approved_ordered_sections"  # the invalid model plan is never used
+    assert ai.events == ["plan", "plan"]
 
 
 @pytest.mark.parametrize("defect, kept, note", [
@@ -235,10 +255,10 @@ def test_missing_capability_question_is_reported_as_limitation_not_blocking():
     lambda p: {**p, "clarifications": ["Which ranking metric do you mean?"]},
     lambda p: {**p, "source_scope": {**p["source_scope"], "from_date": "2020-01-01"}},
 ])
-def test_ambiguity_and_source_override_return_structured_clarification(alter):
-    with pytest.raises(ClarificationRequiredError) as error:
-        generate(ai=PlannedAI(alter_plan=alter))
-    assert error.value.details["clarification_required"]
+def test_planner_questions_and_scope_echoes_never_block_or_widen_the_report(alter):
+    report, ai = generate(ai=PlannedAI(alter_plan=alter))
+    assert ids(report) == [s["id"] for s in EXAMPLE_SECTIONS]
+    assert report.structured_report.scope["selected_period"]["from_date"] == "2026-10-01"  # UI scope, not the model's
 
 
 def test_empty_prompt_rejected_before_ai():
@@ -364,7 +384,7 @@ def test_plan_then_complete_backend_fetch_then_narrative(cap):
     assert len({json.dumps({k: v for k, v in r.items() if k not in {"page", "perPage"}}, sort_keys=True) for r in upstream.requests}) == 1
 
 
-@pytest.mark.parametrize("failure", ["ambiguous", "invalid", "irrelevant"])
+@pytest.mark.parametrize("failure", ["invalid"])
 def test_plan_rejection_happens_before_any_upstream_request(failure):
     import httpx
     from app.services.shipment_source import ShipmentSource
@@ -504,17 +524,21 @@ def test_semantically_general_wording_can_use_model_classification_without_keywo
     assert report.structured_report.charts[0].type == "bar"
 
 
-@pytest.mark.parametrize("prompt", [
-    "Show courier delivery performance with a chart",
-    "create report for last 90 days",
-    "मुझे लाभ की रिपोर्ट बनाओ",
-    "Write a romantic report about the moon",
-])
-def test_general_fallback_never_substitutes_for_specific_or_unrelated_requests(prompt):
+@pytest.mark.parametrize("prompt", ["Show courier delivery performance with a chart", "create report for last 90 days"])
+def test_general_fallback_never_substitutes_for_specific_requests(prompt):
     from app.analysis.interpreter import general_report_request
     assert general_report_request(prompt)[0] is False
-    with pytest.raises(AIResponseError):
+    report, _ = generate(prompt, ai=RuleFallbackAI(alter_plan=lambda p: {"invalid": True}))
+    assert report.content.title != "Shipment Overview"  # the rule-based interpreter answers the specific request
+    assert report.generation.get("workflow") != "approved_ordered_sections"
+
+
+@pytest.mark.parametrize("prompt", ["मुझे लाभ की रिपोर्ट बनाओ", "Write a romantic report about the moon"])
+def test_unrelated_requests_get_a_plain_message_not_a_substitute_report(prompt):
+    from app.errors import InvalidPromptError
+    with pytest.raises(InvalidPromptError) as error:
         generate(prompt, ai=PlannedAI(alter_plan=lambda p: {"invalid": True}))
+    assert "AI Box" in error.value.message and "{" not in error.value.message
 
 
 def test_unrelated_intent_returns_a_clear_response_instead_of_fabricated_report():
@@ -525,20 +549,22 @@ def test_unrelated_intent_returns_a_clear_response_instead_of_fabricated_report(
         generate("Write a poem", ai=PlannedAI(alter_plan=unrelated))
 
 
-def test_optional_preferences_cannot_bypass_ui_scope_conflict():
+def test_optional_preferences_cannot_widen_ui_scope():
     def conflict(plan):
         return {**plan, "clarification_kind": "optional_preferences", "clarifications": ["Which chart?"],
             "source_scope": {**plan["source_scope"], "from_date": "2020-01-01"}}
-    with pytest.raises(ClarificationRequiredError):
-        generate("make a report with a graph", ai=PlannedAI(alter_plan=conflict))
+    report, _ = generate("make a report with a graph", ai=PlannedAI(alter_plan=conflict))
+    assert report.structured_report.scope["selected_period"]["from_date"] == "2026-10-01"
 
 
 def test_general_classification_cannot_drop_a_specific_cohort_and_return_empty_report():
     def empty_scoped_plan(plan):
         return {**plan, "request_kind": "general_analysis", "sections": [], "requirement_ids": [],
             "cohort": [{"field": "status_category", "op": "eq", "value": "delivered"}]}
-    with pytest.raises(AIResponseError):
-        generate("Show delivered performance", ai=PlannedAI(alter_plan=empty_scoped_plan))
+    ai = RuleFallbackAI(alter_plan=empty_scoped_plan)
+    report, _ = generate("Show delivered performance", ai=ai)
+    assert report.records_analyzed > 0 and report.content.title != "Shipment Overview"
+    assert ai.events == ["plan", "plan"]  # the inconsistent model plan is never used
 
 
 def test_manifest_date_subset_and_operational_statuses_from_screenshot():
@@ -580,12 +606,19 @@ def test_invalid_date_filters_are_rejected(field, op, value):
         ExecutionFilter(field=field, op=op, value=value)
 
 
-def test_prompt_date_filter_outside_ui_requires_clarification_before_fetch():
+def test_prompt_dates_outside_supplied_records_use_the_overlap_and_say_so():
+    from app.errors import NoMatchingRecordsError
     ai = PlannedAI(alter_plan=lambda p: {**p, "cohort": [
         {"field": "manifest_datetime", "op": "between", "value": ["2026-09-01", "2026-10-10"]}]})
-    with pytest.raises(ClarificationRequiredError):
+    with pytest.raises(NoMatchingRecordsError) as error:  # every synthetic shipment is manifested on 12 Oct
         generate("Status breakdown from September to October", ai=ai)
+    assert "Manifest Date between 1 Oct 2026 and 10 Oct 2026" in error.value.message
     assert len(ai.calls) == 1
+    ai = PlannedAI(alter_plan=lambda p: {**p, "cohort": [
+        {"field": "manifest_datetime", "op": "between", "value": ["2026-09-01", "2026-10-15"]}]})
+    report, _ = generate("Status breakdown from September to 15 October", ai=ai)
+    assert report.records_analyzed == 8
+    assert any(note.startswith("Showing 1 Oct 2026 and 15 Oct 2026") for note in report.structured_report.limitations)
 
 
 def test_missing_manifest_date_never_falls_back_to_order_date():
@@ -636,7 +669,7 @@ def test_no_usable_analysis_returns_no_data_instead_of_an_unavailable_report():
         row.pop("manifest_datetime")
     ai = PlannedAI([section("requested", ("shipment_status",))], alter_plan=lambda p: {**p, "cohort": [
         {"field": "manifest_datetime", "op": "between", "value": ["2026-10-01", "2026-10-10"]}]})
-    with pytest.raises(NoMatchingRecordsError, match="shipments were received"):
+    with pytest.raises(NoMatchingRecordsError, match="don't include manifest date"):
         generate(records=records, ai=ai, report_accuracy_strict=True)
     assert len(ai.calls) == 1  # No narrative or report is generated.
 
@@ -677,10 +710,10 @@ def test_missing_kpi_is_omitted_and_available_later_metrics_fill_the_cards():
         row["status"] = "Delivered"
     report, _ = generate(records=records, sections=specs, report_accuracy_strict=True)
     cards = report.structured_report.metrics
-    assert len(cards) == 3
+    # The cities total repeats the couriers total, so it is shown once.
+    assert [(c.label, c.value) for c in cards] == [("Total Shipments", 8), ("Zero Returns: Shipments", 0)]
     assert all("missing_trend" not in c.key and c.value != "Unavailable" for c in cards)
-    assert next(c for c in cards if c.key.startswith("zero_returns")).value == 0
-    assert [c.value for c in report.key_metrics] == ["8.0", "0.0", "8.0"]
+    assert [c.value for c in report.key_metrics] == ["8", "0"]
 
 
 def test_pdf_and_word_do_not_show_unavailable_metric_cards():

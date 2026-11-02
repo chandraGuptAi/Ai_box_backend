@@ -7,7 +7,7 @@ from collections import Counter
 from datetime import date
 from typing import Any
 
-from app.analysis.plan import AnalysisPlan, Filter, TableSpec, Unsupported
+from app.analysis.plan import AnalysisPlan, Filter, TableSpec, Unsupported, match_key
 from app.analysis.vocabulary import DataContext, PlanVocabulary
 from app.charts.aggregate import date_buckets, group, measure
 from app.charts.fields import DatasetAdapter
@@ -31,10 +31,11 @@ def _matches(value: Any, f: Filter) -> bool:
             return bounds[0] <= value <= bounds[1]
         return {"gt": value > bounds[0], "gte": value >= bounds[0], "lt": value < bounds[0], "lte": value <= bounds[0]}[f.op]
     if isinstance(f.value, (tuple, list)) and f.op in ("in", "not_in"):
-        inside = str(value).casefold() in {str(v).casefold() for v in f.value}
+        inside = match_key(value) in {match_key(v) for v in f.value}
         return inside if f.op == "in" else not inside
     if f.op in ("eq", "ne"):
-        same = str(value).casefold() == str(f.value).casefold()
+        numbers = all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (value, f.value))
+        same = value == f.value if numbers else match_key(value) == match_key(f.value)
         return same if f.op == "eq" else not same
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return False

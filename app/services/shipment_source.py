@@ -260,6 +260,13 @@ class ShipmentSource:
             return result
         raise last
 
+    async def count(self, query: SourceQuery, credential: str) -> int:
+        """The exact matching total a report would read: the same query and count call as ``fetch`` (one request)."""
+        cfg = self._settings
+        deadline = time.monotonic() + min(cfg.shipment_api_total_timeout, cfg.shipment_api_read_timeout)
+        page = await self._call(self._http(), query, 1, cfg.shipment_api_count_page_size, credential, deadline)
+        return page.total
+
     async def _fetch_once(self, client, query, credential, deadline) -> FetchResult:
         cfg = self._settings
         calls, failure = 0, None

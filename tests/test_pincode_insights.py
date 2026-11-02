@@ -200,7 +200,7 @@ def test_missing_pin_analysis_reports_received_shipments_not_an_empty_source():
     assert error.value.details['reason'] == 'required_fields_missing'
     assert error.value.details['source_records'] == 8
     assert error.value.details['missing_fields'] == ['destination_pincode']
-    assert '8 shipments were received' in str(error.value)
+    assert "don't include destination pincode" in str(error.value)
 
 
 def test_nonmatching_pin_reports_existing_source_separately():
