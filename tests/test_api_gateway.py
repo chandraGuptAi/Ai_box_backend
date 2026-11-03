@@ -97,3 +97,29 @@ def test_channel_wise_report_route_reaches_ai_box_service(monkeypatch):
     assert str(seen[0].url) == "http://ai-box:8100/api/channel_wise_report/channels"
     assert seen[0].headers["x-shipment-authorization"] == "Bearer seller-token"
     assert seen[0].headers["x-ai-box-service-token"] == "box-secret"
+
+
+def test_audit_log_route_reaches_ai_box_service_with_the_callers_audit_key(monkeypatch):
+    monkeypatch.setenv("AI_BOX_SERVICE_URL", "http://ai-box:8100")
+    monkeypatch.setenv("AI_BOX_SERVICE_TOKEN", "box-secret")
+    seen = []
+
+    async def upstream(request):
+        seen.append(request)
+        class Stream(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                yield b'{"total": 0, "calls": []}'
+        return httpx.Response(200, stream=Stream(), headers={"Content-Type": "application/json"})
+
+    app = FastAPI()
+    gateways = install(app)
+    with TestClient(app) as client:
+        transport_client = httpx.AsyncClient(transport=httpx.MockTransport(upstream))
+        for gateway in gateways.values():
+            gateway.client = transport_client
+        response = client.get("/api/audit_log/call-logs?limit=10", headers={"X-Audit-Key": "admin-key"})
+        client.portal.call(transport_client.aclose)
+    assert response.status_code == 200
+    assert str(seen[0].url) == "http://ai-box:8100/api/audit_log/call-logs?limit=10"
+    assert seen[0].headers["x-audit-key"] == "admin-key"
+    assert seen[0].headers["x-ai-box-service-token"] == "box-secret"

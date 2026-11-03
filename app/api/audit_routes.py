@@ -47,7 +47,7 @@ def report_audit(
     search: str | None = Query(default=None, max_length=200, description="Text in prompt, company, user or customer ID."),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=500),
-    format: Literal["json", "csv"] = Query(default="json", description="csv downloads every matching row."),
+    format: Literal["json", "csv", "xlsx"] = Query(default="json", description="csv/xlsx download every matching row."),
 ):
     start = from_date or _today_ist()
     end = to_date or (start if from_date else _today_ist())
@@ -57,6 +57,14 @@ def report_audit(
         raise HTTPException(status_code=400, detail=f"Select at most {MAX_RANGE_DAYS} days.")
     items = query_report_audit(from_date=start, to_date=end, user_id=user_id, outcome=outcome,
                                error_code=error_code, search=search)
+    if format == "xlsx":
+        from app.generators.audit_excel import build_audit_excel
+        content = build_audit_excel(items, start, end,
+                                    {"user_id": user_id, "outcome": outcome, "error_code": error_code, "search": search})
+        name = f"AI-Box-Audit-{start.isoformat()}-to-{end.isoformat()}.xlsx"
+        return Response(content=content,
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
     if format == "csv":
         buffer = io.StringIO()
         writer = csv.DictWriter(buffer, fieldnames=CSV_COLUMNS, extrasaction="ignore")

@@ -106,3 +106,27 @@ def test_csv_export(audit):
                                     {"from_date": "23-10-2026"}, {"page_size": 501}])
 def test_invalid_queries(audit, params):
     assert get(params).status_code in (400, 422)
+
+
+def test_excel_export(audit):
+    from io import BytesIO
+    from openpyxl import load_workbook
+    response = get({"from_date": "2026-10-23", "to_date": "2026-10-26", "format": "xlsx", "page_size": 1})
+    assert response.status_code == 200
+    assert "AI-Box-Audit-2026-10-23-to-2026-10-26.xlsx" in response.headers["content-disposition"]
+    sheet = load_workbook(BytesIO(response.content)).active
+    assert sheet["A8"].fill.fgColor.rgb == "003346A8"
+    assert sheet["A6"].value == 4
+    assert sheet.max_row == 12
+    assert sheet.freeze_panes == "D9"
+    assert sheet["R9"].value == "req4"
+
+
+def test_excel_preserves_formula_like_prompt_as_text(audit, monkeypatch):
+    from io import BytesIO
+    from openpyxl import load_workbook
+    from app.api import audit_routes
+    monkeypatch.setattr(audit_routes, "query_report_audit", lambda **kw: [{"prompt": "=1+1", "outcome": "generated", "date_ist": "2026-10-23"}])
+    response = get({"from_date": "2026-10-23", "format": "xlsx"})
+    cell = load_workbook(BytesIO(response.content)).active["P9"]
+    assert cell.value == "=1+1" and cell.data_type == "s"

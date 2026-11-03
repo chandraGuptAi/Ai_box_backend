@@ -101,6 +101,10 @@ SERVICE_ROUTES = (
     ServiceRoute("ChannelWiseReport", "/api/channel_wise_report", "AI_BOX_SERVICE_URL",
                  "AI_BOX_SERVICE_TOKEN", "AI_BOX_SERVICE_TIMEOUT_SECONDS",
                  token_header="X-Ai-Box-Service-Token", default_timeout=60),
+    # Ai_Box_Service module: AI calling (Voice AI) call logs; it checks the caller's X-Audit-Key itself.
+    ServiceRoute("AuditLog", "/api/audit_log", "AI_BOX_SERVICE_URL",
+                 "AI_BOX_SERVICE_TOKEN", "AI_BOX_SERVICE_TIMEOUT_SECONDS",
+                 token_header="X-Ai-Box-Service-Token", default_timeout=60),
 )
 
 
