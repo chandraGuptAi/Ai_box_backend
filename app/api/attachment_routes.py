@@ -4,7 +4,8 @@ import re
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 
 from app.api.auth import CurrentUser, get_current_user
-from app.services.attachment_client import AttachmentClient
+from app.errors import AppError
+from app.services.attachment_client import ATTACHMENT_MAX_BYTES, TOO_LARGE, AttachmentClient
 
 router = APIRouter(prefix='/api/attachments', tags=['Attachments'])
 
@@ -29,9 +30,9 @@ async def capabilities(user: CurrentUser = Depends(get_current_user), client=Dep
 async def upload(user: CurrentUser = Depends(get_current_user), file: UploadFile = File(...),
                  client=Depends(get_attachment_client)):
     try:
-        blob = await file.read(20 * 1024 * 1024 + 1)
-        if len(blob) > 20 * 1024 * 1024:
-            raise HTTPException(413, 'Attachment exceeds the 20 MiB upload limit')
+        blob = await file.read(ATTACHMENT_MAX_BYTES + 1)
+        if len(blob) > ATTACHMENT_MAX_BYTES:
+            raise AppError(TOO_LARGE, code='attachment_too_large', status_code=413)
         return await client.request('POST', '', user.id,
             files={'file': (file.filename or 'attachment', blob, 'application/octet-stream')})
     finally:

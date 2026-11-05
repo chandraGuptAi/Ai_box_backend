@@ -47,10 +47,10 @@ class RequestTooLargeError(HTTPException):
     unchanged and the normal exception handlers turn it into a 413 response.
     """
 
-    def __init__(self, max_bytes: int) -> None:
+    def __init__(self, max_bytes: int, message: str | None = None) -> None:
         super().__init__(
             status_code=413,
-            detail=f"Request body exceeds the maximum allowed size of {max_bytes} bytes.",
+            detail=message or f"Request body exceeds the maximum allowed size of {max_bytes} bytes.",
         )
 
 
@@ -64,7 +64,12 @@ class RequestSizeLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        max_bytes = max(self.max_bytes, 21 * 1024 * 1024) if scope.get('path') == '/api/attachments' else self.max_bytes
+        if scope.get('path') == '/api/attachments':
+            # The route enforces the exact file limit; allow multipart overhead on top of it here.
+            from app.services.attachment_client import ATTACHMENT_MAX_BYTES, TOO_LARGE
+            max_bytes, message = ATTACHMENT_MAX_BYTES + 1024 * 1024, TOO_LARGE
+        else:
+            max_bytes, message = self.max_bytes, None
         content_length = _header(scope, b"content-length")
         if content_length is not None:
             if not content_length.isdigit():
@@ -75,7 +80,7 @@ class RequestSizeLimitMiddleware:
                     send,
                     413,
                     "request_too_large",
-                    f"Request body exceeds the maximum allowed size of {max_bytes} bytes.",
+                    message or f"Request body exceeds the maximum allowed size of {max_bytes} bytes.",
                 )
                 return
 
@@ -87,7 +92,7 @@ class RequestSizeLimitMiddleware:
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
                 if received > max_bytes:
-                    raise RequestTooLargeError(max_bytes)
+                    raise RequestTooLargeError(max_bytes, message)
             return message
 
         await self.app(scope, limited_receive, send)
