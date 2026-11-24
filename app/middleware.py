@@ -12,6 +12,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from app.errors import error_payload, request_id_var
 
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{8,64}$")
+AI_BOX_ERP_MAX_BYTES = 51 * 1024 * 1024
 
 
 class RequestIdMiddleware:
@@ -64,10 +65,15 @@ class RequestSizeLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        if scope.get('path') == '/api/attachments':
+        path = scope.get('path') or ''
+        if path == '/api/attachments':
             # The route enforces the exact file limit; allow multipart overhead on top of it here.
             from app.services.attachment_client import ATTACHMENT_MAX_BYTES, TOO_LARGE
             max_bytes, message = ATTACHMENT_MAX_BYTES + 1024 * 1024, TOO_LARGE
+        elif path == '/api/ai-box-erp' or path.startswith('/api/ai-box-erp/'):
+            # ERP report files (Ai_Box_Erp MAX_DOWNLOAD_MB, 50 MB) plus multipart overhead; that service
+            # enforces the exact file limit.
+            max_bytes, message = AI_BOX_ERP_MAX_BYTES, "The report file is larger than 50 MB."
         else:
             max_bytes, message = self.max_bytes, None
         content_length = _header(scope, b"content-length")

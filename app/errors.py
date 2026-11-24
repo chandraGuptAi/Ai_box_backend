@@ -204,6 +204,29 @@ class SourceChangedError(ShipmentSourceError):
     retryable = True
 
 
+class MetaSourceNotConfiguredError(ShipmentSourceError):
+    """WhatsApp/Instagram/Facebook connections are not set up on Ai_Box_Service."""
+    status_code = 503
+    code = "meta_not_configured"
+
+
+class MetaNotConnectedError(ShipmentSourceError):
+    """A requested Meta source has no connected account (details: platforms, action=connect)."""
+    status_code = 409
+    code = "meta_not_connected"
+
+
+class MetaReconnectRequiredError(ShipmentSourceError):
+    """A requested Meta source's authorization expired or was revoked (details: platforms, action=reconnect)."""
+    status_code = 409
+    code = "meta_reconnect_required"
+
+
+class MetaNoDataError(InvalidReportDataError):
+    """The requested Meta sources are connected but no synced data covers the selected days."""
+    code = "meta_no_data"
+
+
 class ReportDeadlineError(AppError):
     status_code = 504
     code = "report_deadline_exceeded"

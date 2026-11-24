@@ -21,8 +21,11 @@ def filtered_headers(raw):
 
 
 class ServiceGateway:
-    def __init__(self, base_url, token, timeout, client=None, *, name="Service", token_header="X-Escalation-Service-Token"):
+    def __init__(self, base_url, token, timeout, client=None, *, name="Service", token_header="X-Escalation-Service-Token",
+                 blocked_paths=()):
         self.name = name
+        # Upstream paths (relative to the mount prefix) that callers may never reach through the gateway.
+        self.blocked_paths = tuple(blocked_paths)
         self.token_header = token_header.lower().encode("ascii")
         self.base_url, self.token, self.timeout = base_url.rstrip("/"), token, timeout
         self.client = client
@@ -34,6 +37,11 @@ class ServiceGateway:
             return await JSONResponse({"error": f"{self.name} service is not configured"}, 503)(scope, receive, send)
         if self.client is None:
             return await JSONResponse({"error": f"{self.name} gateway is not ready"}, 503)(scope, receive, send)
+        if self.blocked_paths:
+            path, root = scope["path"], scope.get("root_path", "")
+            relative = path[len(root):] if root and path.startswith(root) else path
+            if any(relative == p or relative.startswith(p + "/") for p in self.blocked_paths):
+                return await JSONResponse({"error": "Not found"}, 404)(scope, receive, send)
         # Preserve encoded path/query exactly, including repeated query parameters.
         raw_path = scope.get("raw_path", scope["path"].encode()).split(b"?", 1)[0]
         url = httpx.URL(self.base_url).copy_with(raw_path=raw_path +
@@ -90,6 +98,7 @@ class ServiceRoute:
     timeout_env: str
     token_header: str = "X-Escalation-Service-Token"
     default_timeout: float = 1800
+    blocked_paths: tuple = ()
 
 
 # Add a ServiceRoute here for each independently deployed service.
@@ -103,6 +112,34 @@ SERVICE_ROUTES = (
                  token_header="X-Ai-Box-Service-Token", default_timeout=60),
     # Ai_Box_Service module: AI calling (Voice AI) call logs; it checks the caller's X-Audit-Key itself.
     ServiceRoute("AuditLog", "/api/audit_log", "AI_BOX_SERVICE_URL",
+                 "AI_BOX_SERVICE_TOKEN", "AI_BOX_SERVICE_TIMEOUT_SECONDS",
+                 token_header="X-Ai-Box-Service-Token", default_timeout=60),
+    # Ai_Box_Service module: sellers' WhatsApp Business / Instagram / Facebook Page connections and insights.
+    # Seller routes are identified there by asking BigShip whose X-Shipment-Authorization login it is (never
+    # by X-User-Id); Meta's own callbacks (/oauth/callback, /webhook, /deauthorize, /data-deletion) are
+    # authenticated by OAuth state or Meta signatures. The streaming proxy forwards the raw body unchanged,
+    # which webhook signature checks require.
+    ServiceRoute("MetaIntegration", "/api/meta", "AI_BOX_SERVICE_URL",
+                 "AI_BOX_SERVICE_TOKEN", "AI_BOX_SERVICE_TIMEOUT_SECONDS",
+                 token_header="X-Ai-Box-Service-Token", default_timeout=60),
+    # Ai_Box_Service module: sellers' Gmail / Outlook mailboxes (connect, list, disconnect, OAuth callback, send
+    # history). Sending itself goes through POST /api/reports/{id}/email/send here, which builds the body and PDF
+    # and calls /api/email/internal/send server-to-server; browsers can never reach /internal/* via the gateway.
+    ServiceRoute("EmailIntegration", "/api/email", "AI_BOX_SERVICE_URL",
+                 "AI_BOX_SERVICE_TOKEN", "AI_BOX_SERVICE_TIMEOUT_SECONDS",
+                 token_header="X-Ai-Box-Service-Token", default_timeout=60, blocked_paths=("/internal",)),
+    # Ai_Box_Erp service: ERP panel "AI Box" page (POST /api/ai-box-erp/generate, multipart in, PDF out).
+    # Its own prefix, so it never overlaps this backend's /api/ai-insights/* routes. The LLM call runs
+    # inside the request, hence the long timeout; app/middleware.py allows 51 MB bodies on this prefix.
+    ServiceRoute("AiBoxErp", "/api/ai-box-erp", "AI_BOX_ERP_SERVICE_URL",
+                 "AI_BOX_ERP_SERVICE_TOKEN", "AI_BOX_ERP_SERVICE_TIMEOUT_SECONDS",
+                 token_header="X-Ai-Box-Service-Token", default_timeout=240),
+    # Ai_Box_Service module ai_assistant: the report page's AI Assistant tab (emails, messages, medicine info).
+    ServiceRoute("AiAssistant", "/api/assistant", "AI_BOX_SERVICE_URL",
+                 "AI_BOX_SERVICE_TOKEN", "AI_BOX_SERVICE_TIMEOUT_SECONDS",
+                 token_header="X-Ai-Box-Service-Token", default_timeout=60),
+    # Ai_Box_Service module channel_insights: "AI Insights" box on the Channel Orders page.
+    ServiceRoute("ChannelInsights", "/api/channel-insights", "AI_BOX_SERVICE_URL",
                  "AI_BOX_SERVICE_TOKEN", "AI_BOX_SERVICE_TIMEOUT_SECONDS",
                  token_header="X-Ai-Box-Service-Token", default_timeout=60),
 )
@@ -129,7 +166,7 @@ def install(host: FastAPI, routes=None):
             raise ValueError(f"{route.timeout_env} must be a positive finite number")
         gateways[route.prefix] = ServiceGateway(
             base_url, token, httpx.Timeout(seconds, connect=5.0),
-            name=route.name, token_header=route.token_header)
+            name=route.name, token_header=route.token_header, blocked_paths=route.blocked_paths)
     previous_lifespan = host.router.lifespan_context
 
     @asynccontextmanager

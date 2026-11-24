@@ -153,6 +153,8 @@ from app.api.canonical_report_routes import router as canonical_report_router
 app.include_router(canonical_report_router)
 from app.api.audit_routes import router as audit_router
 app.include_router(audit_router)
+from app.api.report_email_routes import router as report_email_router
+app.include_router(report_email_router)
 
 # External service routes are registered in the central API gateway.
 from app.api_gateway import install as install_api_gateway

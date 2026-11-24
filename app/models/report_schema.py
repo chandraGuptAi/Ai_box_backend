@@ -194,6 +194,17 @@ class ReportRequest(BaseModel):
         default=False,
         description="Build a report labelled partial instead of failing when records are missing or out of scope.",
     )
+    data_sources: list[Literal["shipments", "whatsapp", "instagram", "facebook"]] | None = Field(
+        default=None, min_length=1, max_length=4,
+        description="Sources to report on. Omitted or ['shipments'] = the existing shipment report. Meta sources "
+                    "(whatsapp, instagram, facebook) use the seller's connected accounts, synced by Ai_Box_Service "
+                    "(/api/meta/report-context) for filters.from_date..to_date; with 'shipments' too, both are "
+                    "reported side by side and never added together.",
+    )
+
+    @property
+    def meta_sources(self) -> list[str]:
+        return [s for s in (self.data_sources or []) if s != "shipments"]
 
     @model_validator(mode="before")
     @classmethod
@@ -221,6 +232,15 @@ class ReportRequest(BaseModel):
 
     @model_validator(mode="after")
     def _one_source(self) -> ReportRequest:
+        if self.data_sources is not None:
+            if len(set(self.data_sources)) != len(self.data_sources):
+                raise ValueError("data_sources must not repeat a source")
+            if self.meta_sources:
+                if self.attachment_ids:
+                    raise ValueError("Attachments cannot be combined with WhatsApp, Instagram or Facebook data")
+                if self.source == "payload":
+                    raise ValueError("WhatsApp, Instagram and Facebook data need source 'shipment_api' or "
+                                     "'channel_api' with filters.from_date and filters.to_date")
         if self.attachment_ids:
             if len(set(self.attachment_ids)) != len(self.attachment_ids):
                 raise ValueError('Attachment IDs must be unique')

@@ -388,6 +388,7 @@ class ReportService:
         from app.services.ai_box_shipments import default_shipment_source
         self._source = source or default_shipment_source(config)
         self._channel_source = channel_source or ChannelSource()
+        self._meta_source = None   # MetaSource(); tests may inject one with a mock transport
 
     def list_report_types(self) -> list[ReportTypeInfo]:
         return [
@@ -624,6 +625,11 @@ class ReportService:
         if request.attachment_ids:
             from app.services.attachment_reports import AttachmentReports
             return await AttachmentReports(self._ai).generate(request, self, user_id, shipment_credential)
+        if request.meta_sources:
+            # WhatsApp / Instagram / Facebook (synced by Ai_Box_Service); shipments, if also selected, go through
+            # the unchanged shipment pipeline below and are reported side by side.
+            from app.services.meta_reports import MetaReports
+            return await MetaReports(self._ai, self._meta_source).generate(request, self, user_id, shipment_credential)
         definition = get_report_definition(request.report_type)
 
         # A follow-up that removes or re-types specific charts patches the current report; it is
